@@ -167,7 +167,7 @@ private struct FeedPage: View {
         ZStack {
             Color.black
             if isLive {
-                VideoSurface(player: player.player, gravity: .resizeAspect)
+                VideoSurface(player: player.player, gravity: .resizeAspect, pip: player.pip)
             } else {
                 ThumbnailView(item: item, showsBadges: false)
             }

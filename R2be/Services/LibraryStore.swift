@@ -35,7 +35,11 @@ final class LibraryStore {
     var indexMatches = 0        // playable (video/audio) keys found so far
     var lastError: String?
 
-    @ObservationIgnored private var folderCache: [String: FolderContents] = [:]
+    @ObservationIgnored private var folderCache: [String: FolderContents] = [:] {
+        didSet { if folderCache.isEmpty { seriesCache = nil } }
+    }
+    /// Series stem → videos, built lazily for Related (see `related(to:)`).
+    @ObservationIgnored private var seriesCache: [String: [VideoItem]]?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
@@ -189,6 +193,38 @@ final class LibraryStore {
         let tokens = SearchMatcher.tokens(query)
         guard !tokens.isEmpty else { return [] }
         return allVideos.filter { $0.key.hasPrefix(prefix) && SearchMatcher.matches($0, tokens: tokens) }
+    }
+
+    // MARK: Related
+
+    /// Other parts of the same video: files whose names match once a trailing part marker is
+    /// removed, e.g. "Trip-pt1", "Trip pt 2", "Trip_part03", "Trip (4)" → "trip". Matching is on the
+    /// whole remaining name, so "pt1" alone never links unrelated videos. Includes `item`, in part order.
+    func related(to item: VideoItem) -> [VideoItem] {
+        let stem = Self.seriesStem(item.title)
+        guard stem.count >= 2 else { return [] }
+        if seriesCache == nil {
+            seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
+        }
+        let parts = seriesCache?[stem] ?? []
+        guard parts.count > 1 else { return [] }
+        return parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    nonisolated static func seriesStem(_ title: String) -> String {
+        var s = title.lowercased()
+            .replacingOccurrences(of: "[._]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        let markers = [
+            "(?:^|[\\s\\-–])(?:pt|part|ep|episode|e|disc|cd|vol|volume|chapter|ch)\\s*\\d{1,3}$",   // -pt1, part 02, ep3
+            "\\s*\\(\\d{1,3}\\)$",                                                             // (2)
+            "(?:\\s*[\\-–#]\\s*|\\s+)\\d{1,2}$",                                                 // " 2", "-3", "#4"
+        ]
+        for pattern in markers {
+            if let r = s.range(of: pattern, options: .regularExpression) { s.removeSubrange(r); break }
+        }
+        return s.trimmingCharacters(in: CharacterSet(charactersIn: " -–#"))
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
 
     func video(bucket: String, key: String) -> VideoItem? {

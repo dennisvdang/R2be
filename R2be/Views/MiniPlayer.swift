@@ -14,7 +14,7 @@ struct MiniPlayerBar: View {
                 .background(Color.white.opacity(0.15))
 
                 HStack(spacing: 10) {
-                    VideoSurface(player: player.player, gravity: .resizeAspectFill)
+                    VideoSurface(player: player.player, gravity: .resizeAspectFill, pip: player.pip)
                         .frame(width: 96, height: 54)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .allowsHitTesting(false)

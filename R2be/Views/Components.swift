@@ -398,17 +398,27 @@ struct AddToPlaylistSheet: View {
 final class PlayerLayerView: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    /// When set, this surface offers itself as the Picture in Picture source while it's on screen.
+    weak var pip: PiPManager?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let pip else { return }
+        if window != nil { pip.register(playerLayer) } else { pip.unregister(playerLayer) }
+    }
 }
 
 struct VideoSurface: UIViewRepresentable {
     let player: AVPlayer
     var gravity: AVLayerVideoGravity = .resizeAspect
+    var pip: PiPManager? = nil
 
     func makeUIView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView()
         v.backgroundColor = .black
         v.playerLayer.player = player
         v.playerLayer.videoGravity = gravity
+        v.pip = pip
         return v
     }
 

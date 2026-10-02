@@ -20,6 +20,7 @@ enum PlaybackContext: Equatable {
 @MainActor
 final class PlayerController {
     let player = AVPlayer()
+    let pip = PiPManager()
 
     private(set) var queue: [VideoItem] = []
     /// Play order as indices into `queue`. Shuffle just permutes this; Up Next reads from it.
@@ -83,6 +84,8 @@ final class PlayerController {
             }
         }
         configureRemoteCommands()
+        pip.onWillStart = { [weak self] in self?.isPresented = false }
+        pip.onRestore = { [weak self] in self?.isPresented = true }
     }
 
     // MARK: - Derived
@@ -125,6 +128,13 @@ final class PlayerController {
     /// Shuffle button on a folder/playlist: random first pick, shuffle stays on for what follows.
     func shufflePlay(_ items: [VideoItem], context: PlaybackContext, title: String) {
         play(items, startAt: nil, shuffle: true, context: context, title: title)
+    }
+
+    /// Play this video now without losing the rest of the queue (used by Related).
+    func playNow(_ item: VideoItem) {
+        if let qi = queue.firstIndex(of: item), order.contains(qi) { jump(to: item); return }
+        playNext(item)
+        next()
     }
 
     func jump(to item: VideoItem) {
@@ -170,6 +180,42 @@ final class PlayerController {
     func reshuffle() {
         guard !order.isEmpty else { return }
         rebuildOrder(keepCurrent: true, forceShuffle: true)
+    }
+
+    // MARK: - Sleep timer
+
+    enum SleepTimer: Equatable {
+        case off
+        case at(Date)            // pause at this time
+        case endOfVideo          // pause when the current video finishes
+    }
+    private(set) var sleepTimer: SleepTimer = .off
+    @ObservationIgnored private var sleepTask: Task<Void, Never>?
+
+    func setSleepTimer(minutes: Int) {
+        let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        sleepTimer = .at(end)
+        sleepTask?.cancel()
+        sleepTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Double(minutes * 60)))
+            guard !Task.isCancelled else { return }
+            self?.sleepTimerFired()
+        }
+    }
+
+    func setSleepAtEndOfVideo() {
+        sleepTask?.cancel()
+        sleepTimer = .endOfVideo
+    }
+
+    func cancelSleepTimer() {
+        sleepTask?.cancel()
+        sleepTimer = .off
+    }
+
+    private func sleepTimerFired() {
+        sleepTimer = .off
+        pause()
     }
 
     // MARK: - Transport
@@ -228,6 +274,7 @@ final class PlayerController {
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []; order = []; position = 0
+        cancelSleepTimer()
         context = .none
         isPresented = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -320,6 +367,7 @@ final class PlayerController {
 
     private func itemDidFinish() {
         if let item = current { ResumeStore.set(position: duration, duration: duration, for: item.id) }
+        if sleepTimer == .endOfVideo { sleepTimerFired(); isPlaying = false; return }
         if autoplay, next() { return }
         isPlaying = false
     }

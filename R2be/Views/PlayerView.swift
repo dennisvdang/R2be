@@ -52,7 +52,7 @@ struct PlayerView: View {
 
     private func videoArea(landscape: Bool) -> some View {
         ZStack {
-            VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect)
+            VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect, pip: player.pip)
 
             // Gesture layer: single tap toggles controls, double tap left/right skips 30 s.
             HStack(spacing: 0) {
@@ -178,6 +178,19 @@ private struct ControlsOverlay: View {
                 }
             }
             Spacer()
+            SleepTimerMenu {
+                Image(systemName: player.sleepTimer == .off ? "moon.zzz" : "moon.zzz.fill")
+                    .font(.title3)
+                    .foregroundStyle(player.sleepTimer == .off ? Color.white : Color.red)
+                    .frame(width: 36, height: 36)
+            }
+            if PiPManager.isSupported {
+                Button { player.pip.toggle(); onInteract() } label: {
+                    Image(systemName: player.pip.isActive ? "pip.exit" : "pip.enter").font(.title3).frame(width: 36, height: 36)
+                }
+                .disabled(!player.pip.isPossible && !player.pip.isActive)
+                .accessibilityLabel("Picture in Picture")
+            }
             AirPlayButton().frame(width: 32, height: 32)
             Menu {
                 Picker("Speed", selection: Binding(get: { player.rate }, set: { player.rate = $0; onInteract() })) {
@@ -268,6 +281,9 @@ private struct PlayerInfoPanel: View {
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
 
+    enum ListTab { case upNext, related }
+    @State private var tab: ListTab = .upNext
+
     var body: some View {
         List {
             if let item = player.current {
@@ -284,6 +300,7 @@ private struct PlayerInfoPanel: View {
                         HStack(spacing: 8) {
                             chip(player.shuffle ? "Shuffle on" : "Shuffle", "shuffle", on: player.shuffle) { player.shuffle.toggle() }
                             chip(player.autoplay ? "Autoplay on" : "Autoplay off", "play.square.stack", on: player.autoplay) { player.autoplay.toggle() }
+                            SleepTimerMenu { sleepChipLabel }
                             chip("Save", "text.badge.plus", on: false) {
                                 pendingAdd = PendingPlaylistAdd(entries: [.video(bucket: item.bucket, key: item.key)])
                             }
@@ -298,35 +315,90 @@ private struct PlayerInfoPanel: View {
                 }
             }
 
+            let related = player.current.map { library.related(to: $0) } ?? []
             Section {
-                ForEach(player.upNext) { v in
-                    Button { player.jump(to: v) } label: {
-                        HStack(spacing: 10) {
-                            ThumbnailView(item: v).frame(width: 120).clipShape(RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(v.title).font(.subheadline).lineLimit(2)
-                                Text(v.folderDisplay).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
+                switch tab {
+                case .upNext:
+                    ForEach(player.upNext) { v in
+                        Button { player.jump(to: v) } label: { videoRow(v) }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.black)
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(Color.black)
+                    .onDelete { player.removeFromUpNext(at: $0) }
+                case .related:
+                    if related.isEmpty {
+                        Text("No other parts found. Related lists videos with the same name ending in -pt1, pt 2, part 3, ep 4, (5) and so on.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .listRowBackground(Color.black)
+                    }
+                    ForEach(related) { v in
+                        let isCurrent = v == player.current
+                        Button { player.playNow(v) } label: { videoRow(v, nowPlaying: isCurrent) }
+                            .buttonStyle(.plain)
+                            .disabled(isCurrent)
+                            .listRowBackground(Color.black)
+                    }
                 }
-                .onDelete { player.removeFromUpNext(at: $0) }
             } header: {
-                HStack {
-                    Text("Up next · \(player.upNext.count)")
+                HStack(spacing: 16) {
+                    tabButton("Up next · \(player.upNext.count)", .upNext)
+                    tabButton("Related · \(max(related.count - 1, 0))", .related)
                     Spacer()
-                    if player.shuffle {
+                    if tab == .upNext, player.shuffle {
                         Button { player.reshuffle() } label: { Label("Reshuffle", systemImage: "dice") }
+                            .font(.caption)
+                    } else if tab == .related, let first = related.first {
+                        Button {
+                            player.play(related, startAt: first, shuffle: false, context: .selection,
+                                        title: "Related", present: false, keepGivenOrder: true)
+                        } label: { Label("Play all parts", systemImage: "play.fill") }
                             .font(.caption)
                     }
                 }
+                .textCase(nil)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color.black)
+    }
+
+    private func tabButton(_ title: String, _ value: ListTab) -> some View {
+        Button { withAnimation(.easeOut(duration: 0.15)) { tab = value } } label: {
+            Text(title)
+                .font(.subheadline.weight(tab == value ? .semibold : .regular))
+                .foregroundStyle(tab == value ? Color.white : Color.secondary)
+                .padding(.bottom, 4)
+                .overlay(alignment: .bottom) {
+                    if tab == value { Rectangle().fill(Color.red).frame(height: 2) }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func videoRow(_ v: VideoItem, nowPlaying: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            ThumbnailView(item: v).frame(width: 120).clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(v.title).font(.subheadline).lineLimit(2)
+                Text(nowPlaying ? "Now playing" : v.folderDisplay)
+                    .font(.caption).foregroundStyle(nowPlaying ? Color.red : Color.secondary).lineLimit(1)
+            }
+        }
+    }
+
+    /// "Sleep" chip; shows the countdown while a timer is running.
+    private var sleepChipLabel: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let title: String = {
+                switch player.sleepTimer {
+                case .off: return "Sleep timer"
+                case .endOfVideo: return "Sleep: end of video"
+                case .at(let end): return "Sleep " + Format.duration(max(end.timeIntervalSince(context.date), 0))
+                }
+            }()
+            chipLabel(title, "moon.zzz", on: player.sleepTimer != .off)
+        }
     }
 
     private func chip(_ title: String, _ symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
@@ -338,6 +410,30 @@ private struct PlayerInfoPanel: View {
             .font(.footnote.weight(.semibold))
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(on ? Color.red.opacity(0.85) : Color(white: 0.18), in: Capsule())
+    }
+}
+
+// MARK: - Sleep timer
+
+/// Menu for setting the sleep timer: pauses playback after a set time or when the video ends.
+struct SleepTimerMenu<MenuLabel: View>: View {
+    @ViewBuilder let label: () -> MenuLabel
+    @Environment(PlayerController.self) private var player
+
+    var body: some View {
+        Menu {
+            if player.sleepTimer != .off {
+                Button("Turn off sleep timer", systemImage: "xmark", role: .destructive) { player.cancelSleepTimer() }
+            }
+            Button("End of current video", systemImage: "film") { player.setSleepAtEndOfVideo() }
+            ForEach([5, 10, 15, 30, 45, 60, 90, 120], id: \.self) { m in
+                Button(m < 60 ? "\(m) minutes" : (m == 60 ? "1 hour" : String(format: "%g hours", Double(m) / 60))) {
+                    player.setSleepTimer(minutes: m)
+                }
+            }
+        } label: {
+            label()
+        }
     }
 }
 
