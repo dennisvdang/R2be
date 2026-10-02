@@ -30,11 +30,26 @@ struct SetupView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Image(systemName: "play.rectangle.on.rectangle.fill").font(.system(size: 44)).foregroundStyle(.red)
                         Text("Connect your R2 bucket").font(.title2.bold())
-                        Text("Create a token in Cloudflare → R2 → Manage API tokens with **Object Read only** permission. The app only ever reads — it never changes your files.")
+                        Text("You'll need four values from your Cloudflare dashboard. The app only ever reads — it never changes your files.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 6)
                 }
+            }
+            Section {
+                Link(destination: R2Links.overview) {
+                    Label("1. Account ID & bucket name", systemImage: "arrow.up.forward.square")
+                }
+                Link(destination: R2Links.apiTokens) {
+                    Label("2. Create an API token (Access Key ID & Secret)", systemImage: "arrow.up.forward.square")
+                }
+                NavigationLink {
+                    R2SetupHelpView()
+                } label: {
+                    Label("How do I create the API token?", systemImage: "questionmark.circle")
+                }
+            } header: { Text("Where to find these") } footer: {
+                Text("Links open the Cloudflare dashboard in Safari. Copy each value, then switch back here to paste it.")
             }
             Section("Cloudflare account") {
                 TextField("Account ID", text: $accountId)
@@ -56,7 +71,7 @@ struct SetupView: View {
                     }
                 }
             } header: { Text("Bucket") } footer: {
-                Text("Leave empty and tap Test to list buckets (needs an account-wide token).")
+                Text("Exactly as shown in Cloudflare → R2 → Overview.")
             }
             Section {
                 Button {
@@ -112,6 +127,55 @@ struct SetupView: View {
         } catch {
             ok = false
             status = error.localizedDescription
+        }
+    }
+}
+
+enum R2Links {
+    static let overview = URL(string: "https://dash.cloudflare.com/?to=/:account/r2/overview")!
+    static let apiTokens = URL(string: "https://dash.cloudflare.com/?to=/:account/r2/api-tokens")!
+}
+
+/// Step-by-step help for finding the values SetupView asks for.
+struct R2SetupHelpView: View {
+    var body: some View {
+        List {
+            Section {
+                Link(destination: R2Links.overview) {
+                    Label("Open R2 Overview", systemImage: "arrow.up.forward.square")
+                }
+                step(1, "Sign in to Cloudflare and pick your account if asked.")
+                step(2, "**Account ID** is under **Account Details** (you may need to scroll). Tap the copy icon.")
+                step(3, "**Bucket name** is in the list of buckets. Copy it exactly as shown.")
+            } header: { Text("Step 1 · Account ID & bucket name") }
+
+            Section {
+                Link(destination: R2Links.apiTokens) {
+                    Label("Open R2 API Tokens", systemImage: "arrow.up.forward.square")
+                }
+                step(1, "Tap **Create API token** (or **Create Account API token**).")
+                step(2, "Give it a name, e.g. **R2be**.")
+                step(3, "Under **Permissions**, choose **Object Read only**.")
+                step(4, "Under **Specify bucket(s)**, pick your video bucket.")
+                step(5, "Leave the other options as they are and tap **Create API Token**.")
+                step(6, "Copy **Access Key ID** and **Secret Access Key** into this app. The secret is shown only once — if you lose it, create a new token.")
+            } header: { Text("Step 2 · API token") } footer: {
+                Text("Ignore the Token value and the S3 endpoint shown on that page. The app builds the endpoint from your Account ID.")
+            }
+
+            Section {
+                Text("Leave **Jurisdiction** on **Default** unless you created the bucket with the EU or FedRAMP jurisdiction.")
+                Text("Then tap **Test connection**, and **Save & open library** once it says Connected.")
+            } header: { Text("Step 3 · Finish in the app") }
+        }
+        .navigationTitle("Cloudflare R2 setup")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func step(_ n: Int, _ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(n).").monospacedDigit().foregroundStyle(.secondary)
+            Text(text)
         }
     }
 }
