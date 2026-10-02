@@ -25,7 +25,6 @@ jobs:
 
       - name: Build (unsigned)
         run: |
-          set -o pipefail
           xcodebuild \
             -project R2be.xcodeproj \
             -scheme R2be \
@@ -34,8 +33,11 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build | tee xcodebuild.log | grep -E "error:|warning: .*R2be|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Build/Products/Release-iphoneos/R2be.app
+            build > xcodebuild.log 2>&1 && status=0 || status=$?
+          grep -E "error:|warning: .*R2be|BUILD (SUCCEEDED|FAILED)" xcodebuild.log || true
+          # Fail the job on a failed build; an empty R2be.app can exist even when compilation fails.
+          [ "$status" -eq 0 ] || exit "$status"
+          test -f build/Build/Products/Release-iphoneos/R2be.app/R2be
 
       - name: Package IPA
         run: |

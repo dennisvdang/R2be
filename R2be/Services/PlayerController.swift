@@ -67,7 +67,7 @@ final class PlayerController {
             let status = p.timeControlStatus
             Task { @MainActor in
                 self?.isPlaying = status != .paused
-                self?.isBuffering = status == .waitingToPlayAndBufferingRate
+                self?.isBuffering = status == .waitingToPlayAtSpecifiedRate
                 self?.updateNowPlaying()
             }
         }
