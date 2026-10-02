@@ -43,7 +43,7 @@ You run all of these steps on Windows, in a browser.
    git remote add origin https://github.com/<you>/r2be.git
    git push -u origin main
    ```
-2. The push starts **Actions → "Build unsigned IPA"**. It takes about 5–8 minutes on GitHub's free macOS runner. You can also start it by hand with **Run workflow**.
+2. Open **Actions → "Build unsigned IPA" → Run workflow**. It takes about 5–8 minutes on GitHub's free macOS runner. (It only runs by hand, because pushes to `main` go to TestFlight instead — see section 4.)
 3. When it turns green, open the run and download the **R2be-ipa** artifact. It's a zip containing `R2be.ipa`, so extract it.
 
 ## 3. Install on your iPhone with a free Apple ID (Sideloadly)
@@ -62,11 +62,41 @@ You run all of these steps on Windows, in a browser.
 - No App Store or TestFlight distribution.
 - Background audio and AirPlay work with a free account.
 
+## 4. TestFlight with a paid Apple Developer account
+
+With a paid account, every push to `main` builds a signed app and uploads it to TestFlight (**Actions → "TestFlight"**). You install and update it from the TestFlight app. You don't need Sideloadly, a cable or Developer Mode, and each build lasts 90 days. Apple signs it in the cloud, so you don't need a Mac or a certificate file either.
+
+One-time setup, all in a browser:
+
+1. **Register the bundle ID.** Go to [developer.apple.com/account](https://developer.apple.com/account) → **Certificates, IDs & Profiles** → **Identifiers** → **+** → **App IDs** → **App**. Enter the description `R2be` and an **Explicit** bundle ID such as `com.yourname.r2be`, then **Register**. You don't need any capabilities.
+2. **Create the app record.** Go to [App Store Connect](https://appstoreconnect.apple.com) → **Apps** → **+** → **New App**. Choose iOS, enter a name (it must be unique on the App Store, e.g. `R2be Player`; the home-screen name stays R2be), pick the bundle ID from step 1, set SKU to `r2be` and keep **Full Access** → **Create**.
+3. **Create an API key.** In App Store Connect → **Users and Access** → **Integrations** → **App Store Connect API** → **Team Keys**, click **Request Access** if you see it. Then click **+**, name the key `GitHub Actions`, set Access to **Admin** (cloud signing needs it) and click **Generate**. Download the `.p8` file (Apple only lets you do this once). Note the **Key ID** and the **Issuer ID** shown above the table.
+4. **Find your Team ID.** It's on [developer.apple.com/account](https://developer.apple.com/account) under **Membership details**.
+5. **Add GitHub secrets.** In your repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**, add:
+
+   | Name | Value |
+   |---|---|
+   | `APPLE_TEAM_ID` | Team ID from step 4 |
+   | `APP_BUNDLE_ID` | bundle ID from step 1 |
+   | `ASC_KEY_ID` | Key ID from step 3 |
+   | `ASC_ISSUER_ID` | Issuer ID from step 3 |
+   | `ASC_KEY_P8` | Open the `.p8` in Notepad and paste all of it, including the `BEGIN`/`END` lines |
+
+6. **Run it.** Go to **Actions** → **TestFlight** → **Run workflow**. After it turns green, Apple takes another 5–30 minutes to process the build. It then shows under your app → **TestFlight**.
+7. **Add yourself as a tester.** In your app → **TestFlight** → **Internal Testing** → **+**, create a group (e.g. `Me`), turn on automatic distribution and add yourself.
+8. **Install.** On the iPhone, install [TestFlight](https://apps.apple.com/app/testflight/id899247664) and sign in with the same Apple ID. R2be appears there; tap **Install**. Future pushes to `main` show up as updates.
+
+Notes:
+- The build number is the workflow's run number, so every run uploads a new build. Re-running the *same* run is rejected as a duplicate; start a new run instead.
+- Apple creates a "Created via API" development certificate the first time it signs on a new runner. You can revoke old ones under **Certificates** at any time.
+- If a run fails, download the **testflight-log** artifact from that run.
+
 ## Project layout
 
 ```
 project.yml                     XcodeGen spec (the workflow turns it into R2be.xcodeproj)
-.github/workflows/build-ipa.yml macOS CI → unsigned .ipa
+.github/workflows/build-ipa.yml macOS CI → unsigned .ipa (manual)
+.github/workflows/testflight.yml signed build → TestFlight (on push to main)
 R2be/
   App/R2beApp.swift         App entry, tab bar, full-screen player presentation
   R2/SigV4.swift                AWS Signature V4 (header auth + presigned URLs), checked against AWS test vectors

@@ -2,9 +2,8 @@ name: Build unsigned IPA
 
 # Builds on GitHub's free macOS runner so no Mac is needed. Sideloadly (Windows) signs the
 # resulting .ipa with your free Apple ID when it installs it on your iPhone.
+# Manual only (Actions → Run workflow): pushes to main go to TestFlight instead (testflight.yml).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
