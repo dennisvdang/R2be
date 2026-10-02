@@ -4,8 +4,20 @@ import SwiftUI
 
 /// Only here to let the player lock orientation for fullscreen (see `Orientation`).
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        _ = DownloadStore.shared   // reconnect to downloads that kept running while the app was closed
+        return true
+    }
+
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Orientation.lock
+    }
+
+    /// iOS relaunches the app when background downloads finish; hand the callback to the store.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        DownloadStore.shared.backgroundCompletionHandler = completionHandler
     }
 }
 
@@ -40,7 +52,7 @@ struct R2beApp: App {
     }
 }
 
-enum AppTab: Hashable { case library, feed, playlists, settings }
+enum AppTab: Hashable { case library, feed, playlists, downloads, settings }
 
 struct RootView: View {
     @Environment(LibraryStore.self) private var library
@@ -49,6 +61,13 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .library
     @State private var pickedCover: PhotosPickerItem?
+
+    /// The device's safe area (notch, home indicator), independent of keyboard and tab bar.
+    @MainActor private static var windowSafeArea: EdgeInsets {
+        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.keyWindow
+        let i = window?.safeAreaInsets ?? .zero
+        return EdgeInsets(top: i.top, leading: i.left, bottom: i.bottom, trailing: i.right)
+    }
 
     var body: some View {
         @Bindable var player = player
@@ -59,7 +78,6 @@ struct RootView: View {
                         FolderView(prefix: "")
                             .navigationDestination(for: FolderRoute.self) { FolderView(prefix: $0.prefix) }
                     }
-                        .miniPlayerInset(hidden: false)
                         .tabItem { Label("Library", systemImage: "play.rectangle.on.rectangle") }
                         .tag(AppTab.library)
 
@@ -68,9 +86,12 @@ struct RootView: View {
                         .tag(AppTab.feed)
 
                     NavigationStack { PlaylistsView() }
-                        .miniPlayerInset(hidden: false)
                         .tabItem { Label("Playlists", systemImage: "music.note.list") }
                         .tag(AppTab.playlists)
+
+                    NavigationStack { DownloadsView() }
+                        .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+                        .tag(AppTab.downloads)
 
                     NavigationStack { SettingsView() }
                         .tabItem { Label("Settings", systemImage: "gearshape") }
@@ -78,6 +99,16 @@ struct RootView: View {
                 }
                 .onAppear { library.refreshIfStale() }
                 .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshIfStale() } }
+                // In-app Picture in Picture: floats over every tab except Feed (which shows the video itself).
+                .overlay {
+                    GeometryReader { geo in
+                        if !player.isPresented, !player.pip.isActive, !(tab == .feed && player.context == .feed) {
+                            FloatingPlayer(bounds: geo.size, insets: Self.windowSafeArea)
+                        }
+                    }
+                    .ignoresSafeArea()   // full-screen coordinates; also keeps it put when the keyboard opens
+                    .animation(.spring(duration: 0.3), value: player.isPresented)
+                }
             } else {
                 NavigationStack { SetupView(isInitialSetup: true) }
             }

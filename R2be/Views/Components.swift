@@ -31,6 +31,9 @@ struct ThumbnailView: View {
                     .padding(5)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if showsBadges { DownloadBadge(item: item).padding(5) }
+        }
         .overlay(alignment: .bottom) {
             if showsBadges, let p = ResumeStore.progress(for: item.id) {
                 GeometryReader { g in
@@ -48,6 +51,27 @@ struct ThumbnailView: View {
             let img = await ThumbnailService.shared.thumbnail(
                 for: item, videoURL: library.streamURL(for: item), sidecarURL: library.sidecarThumbnailURL(for: item))
             withAnimation(.easeOut(duration: 0.2)) { image = img }
+        }
+    }
+}
+
+/// Small corner badge: a ring while downloading, a filled arrow once saved for offline.
+struct DownloadBadge: View {
+    let item: VideoItem
+    private var store: DownloadStore { .shared }
+
+    var body: some View {
+        if store.isDownloaded(item) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.white, Color.black.opacity(0.6))
+        } else if let p = store.progress[item.id] {
+            Circle().trim(from: 0, to: max(p, 0.03))
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 14, height: 14)
+                .padding(2)
+                .background(.black.opacity(0.6), in: Circle())
         }
     }
 }
@@ -244,6 +268,7 @@ struct VideoMenu: View {
     let onAddToPlaylist: ([PlaylistEntry]) -> Void
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @AppStorage("disableShare") private var disableShare = true
 
     var body: some View {
         Button { onPlay() } label: { Label("Play", systemImage: "play.fill") }
@@ -253,9 +278,10 @@ struct VideoMenu: View {
             Label("Add to Playlist…", systemImage: "music.note.list")
         }
         RecentPlaylistButton(entries: [.video(bucket: item.bucket, key: item.key)])
+        DownloadMenuItems(items: [item])
         Divider()
         Button { UIPasteboard.general.string = item.fileName } label: { Label("Copy File Name", systemImage: "doc.on.doc") }
-        if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+        if !disableShare, let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
             ShareLink(item: url) { Label("Share 24h Link", systemImage: "square.and.arrow.up") }
         }
     }
@@ -281,6 +307,7 @@ struct FolderMenu: View {
             onAddToPlaylist(entries)
         } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
         RecentPlaylistButton(entries: entries)
+        DownloadMenuItems(items: library.videos(under: folder.prefix, recursive: true))
         Divider()
         Button {
             covers.requestPicker(bucket: library.activeBucket, prefix: folder.prefix)

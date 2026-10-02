@@ -160,6 +160,7 @@ private struct FeedPage: View {
 
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @AppStorage("disableShare") private var disableShare = true
     @State private var flash: Bool?
     @State private var flashTask: Task<Void, Never>?
     @State private var scrubFraction: Double?     // 0...1 while the progress bar is being dragged
@@ -224,7 +225,7 @@ private struct FeedPage: View {
             railButton("gobackward.30", "−30") { if isLive { player.skip(-PlayerController.skipInterval) } }
             railButton("goforward.30", "+30") { if isLive { player.skip(PlayerController.skipInterval) } }
             railButton("text.badge.plus", "Save", action: save)
-            if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+            if !disableShare, let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
                 ShareLink(item: url) { railLabel("arrowshape.turn.up.right.fill", "Share") }
             }
             railButton("arrow.up.left.and.arrow.down.right", "Expand") {

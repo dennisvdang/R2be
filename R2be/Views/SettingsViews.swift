@@ -306,6 +306,9 @@ struct SettingsView: View {
     @Environment(PlayerController.self) private var player
     @AppStorage("thumbnailsEnabled") private var thumbnailsEnabled = true
     @AppStorage("presignHours") private var presignHours = 6.0
+    @AppStorage("disableShare") private var disableShare = true
+    @State private var downloads = DownloadStore.shared
+    @State private var confirmRemoveDownloads = false
     @State private var confirmSignOut = false
     @State private var cleared = false
 
@@ -344,6 +347,18 @@ struct SettingsView: View {
                 Stepper("Stream link lifetime: \(Int(presignHours)) h", value: $presignHours, in: 1...72, step: 1)
             }
             Section {
+                Toggle("Disable share button", isOn: $disableShare)
+            } footer: {
+                Text("Hides every Share button and \"Share 24h Link\" in the app. On by default.")
+            }
+            Section {
+                LabeledContent("Downloaded", value: "\(downloads.entries.count) videos · \(Format.bytes(downloads.totalBytes))")
+                Button("Remove all downloads", role: .destructive) { confirmRemoveDownloads = true }
+                    .disabled(downloads.entries.isEmpty)
+            } header: { Text("Downloads") } footer: {
+                Text("Downloaded videos play without a connection, from the Downloads tab or anywhere in the app.")
+            }
+            Section {
                 Toggle("Generate thumbnails", isOn: $thumbnailsEnabled)
                 Button("Clear thumbnail cache") {
                     Task { await ThumbnailService.shared.clearCache(); cleared = true }
@@ -358,6 +373,9 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .confirmationDialog("Remove all downloads from this iPhone?", isPresented: $confirmRemoveDownloads, titleVisibility: .visible) {
+            Button("Remove all", role: .destructive) { downloads.removeAll() }
+        }
         .confirmationDialog("Remove the saved R2 keys from this iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Disconnect", role: .destructive) { player.stop(); library.signOut() }
         }

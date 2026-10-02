@@ -263,10 +263,19 @@ final class LibraryStore {
         return (hours > 0 ? hours : 6) * 3600
     }
 
-    /// A fresh signed link every call. Playlists store only bucket + key, never a link, so they
-    /// can't go stale; the player asks for a new link each time it loads a video.
+    /// The downloaded copy if there is one (works offline), otherwise a fresh signed link. Playlists
+    /// store only bucket + key, never a link, so they can't go stale.
     func streamURL(for item: VideoItem) -> URL? {
-        client?.presignedURL(bucket: item.bucket, key: item.key, expires: streamLinkLifetime)
+        if let local = DownloadStore.shared.localURL(for: item) { return local }
+        return client?.presignedURL(bucket: item.bucket, key: item.key, expires: streamLinkLifetime)
+    }
+
+    /// Start offline downloads (skips ones already downloaded or in progress).
+    func download(_ items: [VideoItem]) {
+        guard let client else { return }
+        for item in items where !DownloadStore.shared.isDownloaded(item) && !DownloadStore.shared.isDownloading(item) {
+            DownloadStore.shared.download(item, from: client.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600))
+        }
     }
 
     /// Optional sidecar thumbnail: "clip.jpg" or "clip.mp4.jpg" next to "clip.mp4", or a

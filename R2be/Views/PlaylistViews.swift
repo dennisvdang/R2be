@@ -238,6 +238,7 @@ struct PlaylistDetailView: View {
             }
             .padding(.vertical, 8)
         }
+        .scrollDismissesKeyboard(.immediately)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "Search this playlist")
     }
@@ -383,6 +384,7 @@ private struct VideoPickerLevel: View {
                 ContentUnavailableView(isSearching ? "No matches" : "No videos here", systemImage: "film.stack")
             }
         }
+        .scrollDismissesKeyboard(.immediately)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search this folder")
         .navigationTitle(prefix.isEmpty ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? ""))
         .navigationBarTitleDisplayMode(.inline)

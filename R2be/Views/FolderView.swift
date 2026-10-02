@@ -70,6 +70,7 @@ struct FolderView: View {
             }
             .padding(.bottom, 24)
         }
+        .scrollDismissesKeyboard(.immediately)   // hide the keyboard on scroll; the search and results stay
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(isRoot ? .large : .inline)
         // .always pins the search field in the navigation bar so it stays put while scrolling.
@@ -195,15 +196,29 @@ struct FolderView: View {
                 selection = nil
             }
             .disabled(selectedVideos.isEmpty)
-            PillButton(title: "Play", systemImage: "play.fill") {
+            iconButton("arrow.down.circle", "Download selected") {
+                library.download(selectedVideos)
+                selection = nil
+            }
+            iconButton("play.fill", "Play selected") {
                 player.play(selectedVideos, context: .selection, title: "Selection")
                 selection = nil
             }
-            .disabled(selectedVideos.isEmpty)
-            .frame(width: 96)
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.ultraThinMaterial)
+    }
+
+    private func iconButton(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.body.weight(.semibold))
+                .frame(width: 40, height: 40)
+                .background(Color(white: 0.18), in: Circle())
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .disabled(selectedVideos.isEmpty)
+        .accessibilityLabel(label)
     }
 
     private func play(_ item: VideoItem) {

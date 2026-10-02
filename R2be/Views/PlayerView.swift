@@ -149,7 +149,7 @@ private struct ControlsOverlay: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [.black.opacity(0.65), .clear, .clear, .black.opacity(0.75)],
+            LinearGradient(colors: [.black.opacity(0.6), .clear, .clear, .black.opacity(0.6)],
                            startPoint: .top, endPoint: .bottom)
                 .allowsHitTesting(false)
 
@@ -161,16 +161,18 @@ private struct ControlsOverlay: View {
                 bottomBar
             }
             .padding(.horizontal, landscape ? 44 : 12)
-            .padding(.vertical, landscape ? 16 : 8)
+            .padding(.top, landscape ? 16 : 8)
         }
         .foregroundStyle(.white)
     }
 
+    // Top: minimise on the left; autoplay switch, shuffle, AirPlay and settings on the right.
     private var topBar: some View {
         HStack(spacing: 14) {
             Button { player.isPresented = false } label: {
                 Image(systemName: "chevron.down").font(.title3.weight(.semibold)).frame(width: 36, height: 36)
             }
+            .accessibilityLabel("Minimise")
             if landscape, let item = player.current {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
@@ -178,78 +180,78 @@ private struct ControlsOverlay: View {
                 }
             }
             Spacer()
-            SleepTimerMenu {
-                Image(systemName: player.sleepTimer == .off ? "moon.zzz" : "moon.zzz.fill")
-                    .font(.title3)
-                    .foregroundStyle(player.sleepTimer == .off ? Color.white : Color.red)
+            AutoplaySwitch(isOn: player.autoplay) { player.autoplay.toggle(); onInteract() }
+            Button { player.shuffle.toggle(); onInteract() } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(player.shuffle ? Color.red : Color.white)
                     .frame(width: 36, height: 36)
             }
-            if PiPManager.isSupported {
-                Button { player.pip.toggle(); onInteract() } label: {
-                    Image(systemName: player.pip.isActive ? "pip.exit" : "pip.enter").font(.title3).frame(width: 36, height: 36)
-                }
-                .disabled(!player.pip.isPossible && !player.pip.isActive)
-                .accessibilityLabel("Picture in Picture")
-            }
+            .accessibilityLabel(player.shuffle ? "Shuffle on" : "Shuffle off")
             AirPlayButton().frame(width: 32, height: 32)
-            Menu {
-                Picker("Speed", selection: Binding(get: { player.rate }, set: { player.rate = $0; onInteract() })) {
-                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as [Float], id: \.self) { r in
-                        Text(r == 1 ? "Normal" : String(format: "%gx", r)).tag(r)
-                    }
-                }
-                Toggle("Loop queue", isOn: Binding(get: { player.loopQueue }, set: { player.loopQueue = $0 }))
-            } label: {
-                Image(systemName: "gauge.with.dots.needle.33percent").font(.title3).frame(width: 36, height: 36)
+            PlayerSettingsMenu(landscape: landscape, fill: $fill, onInteract: onInteract) {
+                Image(systemName: "gearshape").font(.system(size: 20, weight: .semibold)).frame(width: 36, height: 36)
             }
         }
     }
 
+    // Middle: previous / play-pause / next in round buttons, ±30 s on the outside.
     private var transport: some View {
-        HStack(spacing: landscape ? 48 : 26) {
-            control("gobackward.30", size: 26) { player.skip(-PlayerController.skipInterval) }
-            control("backward.end.fill", size: 24) { player.previous() }
+        HStack(spacing: landscape ? 40 : 18) {
+            plain("gobackward.30", size: 22) { player.skip(-PlayerController.skipInterval) }
+            round("backward.end.fill", size: 22, diameter: 52) { player.previous() }
             Button { player.togglePlay(); onInteract() } label: {
                 ZStack {
                     if player.isBuffering { ProgressView().controlSize(.large).tint(.white) }
-                    else { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 38)) }
+                    else { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 34)) }
                 }
-                .frame(width: 72, height: 72)
-                .background(.black.opacity(0.35), in: Circle())
+                .frame(width: 70, height: 70)
+                .background(.black.opacity(0.4), in: Circle())
             }
-            control("forward.end.fill", size: 24) { player.next() }
+            round("forward.end.fill", size: 22, diameter: 52) { player.next() }
                 .disabled(!player.hasNext).opacity(player.hasNext ? 1 : 0.4)
-            control("goforward.30", size: 26) { player.skip(PlayerController.skipInterval) }
+            plain("goforward.30", size: 22) { player.skip(PlayerController.skipInterval) }
         }
     }
 
-    private func control(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+    private func round(_ symbol: String, size: CGFloat, diameter: CGFloat, action: @escaping () -> Void) -> some View {
         Button { action(); onInteract() } label: {
-            Image(systemName: symbol).font(.system(size: size, weight: .semibold)).frame(width: 48, height: 48)
+            Image(systemName: symbol).font(.system(size: size, weight: .semibold))
+                .frame(width: diameter, height: diameter)
+                .background(.black.opacity(0.4), in: Circle())
         }
     }
 
+    private func plain(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button { action(); onInteract() } label: {
+            Image(systemName: symbol).font(.system(size: size, weight: .semibold)).frame(width: 44, height: 44)
+        }
+    }
+
+    // Bottom: time pill on the left, fullscreen alone on the right, scrubber along the bottom edge.
     private var bottomBar: some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text(Format.duration(player.isScrubbing ? scrubValue : player.currentTime))
-                Text("/").foregroundStyle(.white.opacity(0.5))
-                Text(Format.duration(player.duration)).foregroundStyle(.white.opacity(0.7))
-                Spacer()
-                toggle("shuffle", on: player.shuffle) { player.shuffle.toggle() }
-                toggle(player.autoplay ? "play.square.stack.fill" : "play.square.stack", on: player.autoplay) { player.autoplay.toggle() }
-                if landscape {
-                    // Zoom to fill the screen (crops the edges) vs. fit the whole picture.
-                    toggle(fill ? "aspectratio.fill" : "aspectratio", on: fill) {
-                        withAnimation { fill.toggle() }
-                    }
-                    toggle("arrow.down.right.and.arrow.up.left", on: false) { Orientation.exitFullscreen() }
-                } else {
-                    // Goes fullscreen landscape even while the phone is upright; turn the phone after.
-                    toggle("arrow.up.left.and.arrow.down.right", on: false) { Orientation.enterFullscreen() }
+        VStack(spacing: 2) {
+            HStack(alignment: .bottom) {
+                HStack(spacing: 4) {
+                    Text(Format.duration(player.isScrubbing ? scrubValue : player.currentTime))
+                    Text("/").foregroundStyle(.white.opacity(0.6))
+                    Text(Format.duration(player.duration)).foregroundStyle(.white.opacity(0.8))
                 }
+                .font(.subheadline.monospacedDigit().weight(.medium))
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.black.opacity(0.45), in: Capsule())
+                Spacer()
+                Button {
+                    if landscape { Orientation.exitFullscreen() } else { Orientation.enterFullscreen() }
+                    onInteract()
+                } label: {
+                    Image(systemName: landscape ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.45), in: Circle())
+                }
+                .accessibilityLabel(landscape ? "Exit full screen" : "Full screen")
             }
-            .font(.caption.monospacedDigit())
 
             Slider(value: Binding(get: { player.isScrubbing ? scrubValue : player.currentTime },
                                   set: { scrubValue = $0 }),
@@ -261,15 +263,79 @@ private struct ControlsOverlay: View {
                 onInteract()
             })
             .tint(.red)
+            .padding(.horizontal, landscape ? -28 : -6)   // run the scrubber nearly edge to edge
         }
     }
+}
 
-    private func toggle(_ symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button { action(); onInteract() } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(on ? Color.red : Color.white)
-                .frame(width: 36, height: 30)
+/// YouTube-style autoplay switch: a pill with a ▶︎ knob on the right when on, ❚❚ on the left when off.
+private struct AutoplaySwitch: View {
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule().fill(.white.opacity(isOn ? 0.55 : 0.3)).frame(width: 46, height: 22)
+                Circle().fill(.white).frame(width: 28, height: 28)
+                    .overlay(Image(systemName: isOn ? "play.fill" : "pause.fill")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(.black))
+                    .shadow(radius: 2)
+            }
+            .frame(width: 50, height: 36)
+            .animation(.easeOut(duration: 0.15), value: isOn)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isOn ? "Autoplay on" : "Autoplay off")
+    }
+}
+
+/// The cog menu: speed, loop, sleep timer, picture fit, Picture in Picture and media source.
+private struct PlayerSettingsMenu<MenuLabel: View>: View {
+    let landscape: Bool
+    @Binding var fill: Bool
+    let onInteract: () -> Void
+    @ViewBuilder let label: () -> MenuLabel
+    @Environment(PlayerController.self) private var player
+    @Environment(LibraryStore.self) private var library
+    @State private var downloads = DownloadStore.shared
+
+    var body: some View {
+        Menu {
+            Picker(selection: Binding(get: { player.rate }, set: { player.rate = $0; onInteract() })) {
+                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as [Float], id: \.self) { r in
+                    Text(r == 1 ? "Normal" : String(format: "%gx", r)).tag(r)
+                }
+            } label: {
+                Label("Playback speed", systemImage: "gauge.with.dots.needle.33percent")
+            }
+            .pickerStyle(.menu)
+            Toggle(isOn: Binding(get: { player.loopQueue }, set: { player.loopQueue = $0 })) {
+                Label("Loop queue", systemImage: "repeat")
+            }
+            Menu {
+                SleepTimerItems()
+            } label: {
+                Label(player.sleepTimer == .off ? "Sleep timer" : "Sleep timer (on)", systemImage: "moon.zzz")
+            }
+            if landscape {
+                Toggle(isOn: $fill) { Label("Zoom to fill", systemImage: "aspectratio") }
+            }
+            if PiPManager.isSupported {
+                Button { player.pip.toggle() } label: {
+                    Label(player.pip.isActive ? "Stop Picture in Picture" : "Picture in Picture", systemImage: "pip.enter")
+                }
+                .disabled(!player.pip.isPossible && !player.pip.isActive)
+            }
+            if let item = player.current {
+                Section("Media source") {
+                    Label(downloads.isDownloaded(item) ? "Playing downloaded copy" : "Streaming from R2",
+                          systemImage: downloads.isDownloaded(item) ? "iphone" : "cloud")
+                    DownloadMenuItems(items: [item])
+                }
+            }
+        } label: {
+            label()
         }
     }
 }
@@ -280,6 +346,8 @@ private struct PlayerInfoPanel: View {
     @Binding var pendingAdd: PendingPlaylistAdd?
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @AppStorage("disableShare") private var disableShare = true
+    @State private var downloads = DownloadStore.shared
 
     enum ListTab { case upNext, related }
     @State private var tab: ListTab = .upNext
@@ -290,7 +358,8 @@ private struct PlayerInfoPanel: View {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.title).font(.headline).lineLimit(3)
-                        Text([player.sourceTitle, item.folderDisplay, Format.bytes(item.size), Format.relative(item.lastModified)]
+                        // Views are plays counted on this iPhone (PlayCountStore); no file size here.
+                        Text([PlayCountStore.label(for: item.id), player.sourceTitle, item.folderDisplay, Format.relative(item.lastModified)]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -304,7 +373,14 @@ private struct PlayerInfoPanel: View {
                             chip("Save", "text.badge.plus", on: false) {
                                 pendingAdd = PendingPlaylistAdd(entries: [.video(bucket: item.bucket, key: item.key)])
                             }
-                            if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+                            if downloads.isDownloaded(item) {
+                                chipLabel("Downloaded", "arrow.down.circle.fill", on: false)
+                            } else if let p = downloads.progress[item.id] {
+                                chip("Downloading \(Int(p * 100))%", "arrow.down.circle", on: false) { downloads.cancel(item) }
+                            } else {
+                                chip("Download", "arrow.down.circle", on: false) { library.download([item]) }
+                            }
+                            if !disableShare, let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
                                 ShareLink(item: url) { chipLabel("Share", "square.and.arrow.up", on: false) }
                                     .buttonStyle(.plain)
                             }
@@ -418,10 +494,18 @@ private struct PlayerInfoPanel: View {
 /// Menu for setting the sleep timer: pauses playback after a set time or when the video ends.
 struct SleepTimerMenu<MenuLabel: View>: View {
     @ViewBuilder let label: () -> MenuLabel
+
+    var body: some View {
+        Menu { SleepTimerItems() } label: { label() }
+    }
+}
+
+/// The sleep timer choices, shared by the chip menu and the player's cog menu.
+struct SleepTimerItems: View {
     @Environment(PlayerController.self) private var player
 
     var body: some View {
-        Menu {
+        Group {
             if player.sleepTimer != .off {
                 Button("Turn off sleep timer", systemImage: "xmark", role: .destructive) { player.cancelSleepTimer() }
             }
@@ -431,8 +515,6 @@ struct SleepTimerMenu<MenuLabel: View>: View {
                     player.setSleepTimer(minutes: m)
                 }
             }
-        } label: {
-            label()
         }
     }
 }

@@ -64,6 +64,7 @@ final class PlayerController {
 
     /// True once the current link is within 5 minutes of expiring (e.g. paused overnight).
     private var linkIsStale: Bool {
+        if let item = current, DownloadStore.shared.isDownloaded(item) { return false }
         let lifetime = library?.streamLinkLifetime ?? 6 * 3600
         return Date().timeIntervalSince(linkCreated) > lifetime - 300
     }
@@ -322,7 +323,10 @@ final class PlayerController {
     private func loadCurrent(isRetry: Bool = false) {
         guard let item = current, let url = library?.streamURL(for: item) else { return }
         linkCreated = Date()
-        if !isRetry { retriedExpiredLink = false }
+        if !isRetry {
+            retriedExpiredLink = false
+            PlayCountStore.increment(item.id)
+        }
         errorMessage = nil
         currentTime = 0
         duration = ResumeStore.duration(for: item.id) ?? 0
