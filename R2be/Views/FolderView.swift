@@ -110,7 +110,7 @@ struct FolderView: View {
     private var indexingBanner: some View {
         HStack(spacing: 10) {
             ProgressView()
-            Text("Scanning bucket… \(library.indexProgress.formatted()) files · \(library.indexMatches.formatted()) videos").font(.footnote)
+            Text("Scanning bucket… \(library.indexProgress.formatted()) files · \(library.indexMatches.formatted()) media").font(.footnote)
         }
         .padding(.horizontal, 16)
     }

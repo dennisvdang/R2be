@@ -32,7 +32,7 @@ final class LibraryStore {
     private(set) var indexes: [String: BucketIndex] = [:]
     var isIndexing = false
     var indexProgress = 0       // keys scanned so far
-    var indexMatches = 0        // video keys found so far
+    var indexMatches = 0        // playable (video/audio) keys found so far
     var lastError: String?
 
     @ObservationIgnored private var folderCache: [String: FolderContents] = [:]
@@ -52,7 +52,9 @@ final class LibraryStore {
 
     // MARK: Credentials
 
-    func save(credentials new: R2Credentials) {
+    /// Pass `folders` to change which folders of `new.bucket` get indexed; nil keeps the current choice.
+    func save(credentials new: R2Credentials, folders: [String]? = nil) {
+        if let folders { Self.setIndexFolders(folders, for: new.bucket) }
         KeychainStore.save(new)
         credentials = new
         folderCache = [:]
@@ -73,13 +75,15 @@ final class LibraryStore {
         guard let client, isConfigured else { return }
         refreshTask?.cancel()
         let bucket = activeBucket
+        let folders = Self.indexFolders(for: bucket)
         isIndexing = true
         indexProgress = 0
         indexMatches = 0
         lastError = nil
         refreshTask = Task {
             do {
-                let objects = try await client.listAllObjects(bucket: bucket, include: Self.isIndexable) { scanned, pageKept in
+                let objects = try await client.listAllObjects(bucket: bucket, prefixes: folders.isEmpty ? [""] : folders,
+                                                          include: Self.isIndexable) { scanned, pageKept in
                     let videos = pageKept.filter { MediaTypes.playable.contains(($0.key as NSString).pathExtension.lowercased()) }.count
                     Task { @MainActor [weak self] in
                         self?.indexProgress = scanned
@@ -107,6 +111,20 @@ final class LibraryStore {
         guard isConfigured, !isIndexing else { return }
         if let built = activeIndex?.builtAt, Date().timeIntervalSince(built) < maxAge { return }
         refresh()
+    }
+
+    // MARK: Folders to index
+
+    /// Folder prefixes (with trailing "/") chosen for a bucket. Empty means the whole bucket.
+    nonisolated static func indexFolders(for bucket: String) -> [String] {
+        UserDefaults.standard.stringArray(forKey: "indexFolders." + bucket) ?? []
+    }
+
+    /// Stores the choice, dropping any folder already covered by a selected parent.
+    nonisolated static func setIndexFolders(_ folders: [String], for bucket: String) {
+        let unique = Set(folders.map { $0.hasSuffix("/") ? $0 : $0 + "/" })
+        let kept = unique.filter { f in !unique.contains { $0 != f && f.hasPrefix($0) } }.sorted()
+        UserDefaults.standard.set(kept, forKey: "indexFolders." + bucket)
     }
 
     /// Videos, plus images that may be sidecar thumbnails. Everything else is dropped while listing.

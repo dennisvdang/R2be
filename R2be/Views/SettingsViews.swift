@@ -9,11 +9,13 @@ struct SetupView: View {
     @State private var accessKeyId = ""
     @State private var secret = ""
     @State private var bucket = ""
+    @State private var folders: [String] = []
     @State private var jurisdiction: R2Credentials.Jurisdiction = .standard
     @State private var buckets: [String] = []
     @State private var testing = false
     @State private var status: String?
     @State private var ok = false
+    @State private var loaded = false
 
     private var draft: R2Credentials {
         R2Credentials(accountId: accountId.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -74,6 +76,16 @@ struct SetupView: View {
                 Text("Exactly as shown in Cloudflare → R2 → Overview.")
             }
             Section {
+                NavigationLink {
+                    FolderSelectionView(client: R2Client(credentials: draft), bucket: draft.bucket, selection: $folders)
+                } label: {
+                    LabeledContent("Folders to index", value: FolderSelectionView.summary(folders))
+                }
+                .disabled(draft.bucket.isEmpty || accountId.isEmpty || accessKeyId.isEmpty || secret.isEmpty)
+            } footer: {
+                Text("If your media is only in some folders, pick just those. Indexing then skips the rest of the bucket and is much faster.")
+            }
+            Section {
                 Button {
                     Task { await test() }
                 } label: {
@@ -91,7 +103,7 @@ struct SetupView: View {
             }
             Section {
                 Button("Save & open library") {
-                    library.save(credentials: draft)
+                    library.save(credentials: draft, folders: folders)
                     if !isInitialSetup { dismiss() }
                 }
                 .bold()
@@ -102,11 +114,16 @@ struct SetupView: View {
         .textInputAutocapitalization(.never)
         .navigationTitle(isInitialSetup ? "Welcome" : "R2 Connection")
         .onAppear {
+            // Runs again when popping back from a pushed screen; don't overwrite unsaved edits.
+            guard !loaded else { return }
+            loaded = true
             if let c = library.credentials {
                 accountId = c.accountId; accessKeyId = c.accessKeyId; secret = c.secretAccessKey
                 bucket = c.bucket; jurisdiction = c.jurisdiction
             }
+            folders = LibraryStore.indexFolders(for: draft.bucket)
         }
+        .onChange(of: bucket) { folders = LibraryStore.indexFolders(for: draft.bucket) }
     }
 
     private func test() async {
@@ -127,6 +144,110 @@ struct SetupView: View {
         } catch {
             ok = false
             status = error.localizedDescription
+        }
+    }
+}
+
+/// Pick which folders of a bucket get indexed. Tap a row to select it (which covers everything
+/// inside it); tap the chevron to open it and pick subfolders instead.
+struct FolderSelectionView: View {
+    let client: R2Client
+    let bucket: String
+    var prefix: String = ""
+    @Binding var selection: [String]
+
+    @State private var folders: [String]?
+    @State private var error: String?
+    @State private var openFolder: String?
+
+    static func summary(_ folders: [String]) -> String {
+        switch folders.count {
+        case 0: return "Whole bucket"
+        case 1: return String(folders[0].dropLast())
+        default: return "\(folders.count) folders"
+        }
+    }
+
+    var body: some View {
+        List {
+            if prefix.isEmpty {
+                Section {
+                    Button { selection = [] } label: { checkRow("Whole bucket", checked: selection.isEmpty) }
+                } footer: {
+                    Text("Or pick one or more folders below.")
+                }
+            }
+            Section {
+                if let folders {
+                    if folders.isEmpty {
+                        Text("No subfolders").foregroundStyle(.secondary)
+                    }
+                    ForEach(folders, id: \.self) { folderRow($0) }
+                } else if let error {
+                    Label(error, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.footnote)
+                } else {
+                    HStack { ProgressView(); Text("Loading folders…").foregroundStyle(.secondary) }
+                }
+            } header: {
+                Text(prefix.isEmpty ? bucket : prefix)
+            }
+        }
+        .navigationTitle(prefix.isEmpty ? "Folders to index" : name(of: prefix))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $openFolder) { sub in
+            FolderSelectionView(client: client, bucket: bucket, prefix: sub, selection: $selection)
+        }
+        .task { await load() }
+    }
+
+    private func folderRow(_ folder: String) -> some View {
+        let coveredByParent = selection.contains { $0 != folder && folder.hasPrefix($0) }
+        return HStack {
+            Button { toggle(folder) } label: {
+                checkRow(name(of: folder), checked: coveredByParent || selection.contains(folder))
+            }
+            .buttonStyle(.borderless)
+            .disabled(coveredByParent)
+            Button { openFolder = folder } label: {
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary).padding(.leading, 12)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func checkRow(_ title: String, checked: Bool) -> some View {
+        HStack {
+            Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(checked ? Color.accentColor : Color.secondary)
+            Text(title).foregroundStyle(Color.primary)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func toggle(_ folder: String) {
+        if let i = selection.firstIndex(of: folder) {
+            selection.remove(at: i)
+        } else {
+            selection.removeAll { $0.hasPrefix(folder) }   // a parent covers its subfolders
+            selection.append(folder)
+            selection.sort()
+        }
+    }
+
+    private func name(of folder: String) -> String {
+        String(folder.dropLast().split(separator: "/").last ?? "")
+    }
+
+    private func load() async {
+        guard folders == nil else { return }
+        do {
+            folders = try await client.listFolders(bucket: bucket, prefix: prefix)
+                .filter { !name(of: $0).hasPrefix(".") }
+                .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        } catch is CancellationError {
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
@@ -194,7 +315,8 @@ struct SettingsView: View {
             Section("Connection") {
                 LabeledContent("Bucket", value: library.activeBucket)
                 LabeledContent("Account", value: String((library.credentials?.accountId ?? "").prefix(8)) + "…")
-                NavigationLink("Edit connection / switch bucket") { SetupView() }
+                LabeledContent("Folders indexed", value: FolderSelectionView.summary(LibraryStore.indexFolders(for: library.activeBucket)))
+                NavigationLink("Edit connection / folders / bucket") { SetupView() }
             }
             Section {
                 LabeledContent("Videos indexed", value: "\(library.allVideos.count)")
@@ -207,7 +329,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Re-index bucket now")
                         Spacer()
-                        if library.isIndexing { ProgressView(); Text("\(library.indexMatches.formatted()) videos").font(.caption) }
+                        if library.isIndexing { ProgressView(); Text("\(library.indexMatches.formatted()) found").font(.caption) }
                     }
                 }
                 .disabled(library.isIndexing)

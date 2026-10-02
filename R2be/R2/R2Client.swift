@@ -121,26 +121,42 @@ struct R2Client: Sendable {
         return page
     }
 
-    /// Walks every page of the bucket (no delimiter) and returns the objects `include` accepts.
-    /// S3 listing can't filter by extension server-side, so every key is still scanned, but rejected
-    /// ones are dropped page by page. `progress` gets the running scanned count and the objects
-    /// kept from the latest page.
-    func listAllObjects(bucket: String, prefix: String = "",
+    /// Walks every page under each prefix (no delimiter; `[""]` is the whole bucket) and returns the
+    /// objects `include` accepts. S3 listing can't filter by extension server-side, so every key under
+    /// the prefixes is still scanned, but rejected ones are dropped page by page. `progress` gets the
+    /// running scanned count and the objects kept from the latest page.
+    func listAllObjects(bucket: String, prefixes: [String] = [""],
                         include: @Sendable (R2Object) -> Bool = { _ in true },
                         progress: (@Sendable (Int, [R2Object]) -> Void)? = nil) async throws -> [R2Object] {
         var kept: [R2Object] = []
         var scanned = 0
+        for prefix in prefixes {
+            var token: String?
+            repeat {
+                try Task.checkCancellation()
+                let page = try await listObjects(bucket: bucket, prefix: prefix, continuationToken: token)
+                scanned += page.objects.count
+                let pageKept = page.objects.filter(include)
+                kept.append(contentsOf: pageKept)
+                progress?(scanned, pageKept)
+                token = page.isTruncated ? page.nextContinuationToken : nil
+            } while token != nil
+        }
+        return kept
+    }
+
+    /// Immediate subfolders of `prefix` (e.g. "Shows/" → ["Shows/A/", "Shows/B/"]), via a "/" delimiter
+    /// listing, so it's cheap even for huge folders.
+    func listFolders(bucket: String, prefix: String = "") async throws -> [String] {
+        var folders: [String] = []
         var token: String?
         repeat {
             try Task.checkCancellation()
-            let page = try await listObjects(bucket: bucket, prefix: prefix, continuationToken: token)
-            scanned += page.objects.count
-            let pageKept = page.objects.filter(include)
-            kept.append(contentsOf: pageKept)
-            progress?(scanned, pageKept)
+            let page = try await listObjects(bucket: bucket, prefix: prefix, delimiter: "/", continuationToken: token)
+            folders.append(contentsOf: page.commonPrefixes)
             token = page.isTruncated ? page.nextContinuationToken : nil
         } while token != nil
-        return kept
+        return folders
     }
 
     private func get(_ url: URL) async throws -> Data {
