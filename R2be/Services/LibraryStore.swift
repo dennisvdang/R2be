@@ -87,7 +87,7 @@ final class LibraryStore {
         refreshTask = Task {
             do {
                 let objects = try await client.listAllObjects(bucket: bucket, prefixes: folders.isEmpty ? [""] : folders,
-                                                          include: Self.isIndexable) { scanned, pageKept in
+                                                          include: { LibraryStore.isIndexable($0) }) { scanned, pageKept in
                     let videos = pageKept.filter { MediaTypes.playable.contains(($0.key as NSString).pathExtension.lowercased()) }.count
                     Task { @MainActor [weak self] in
                         self?.indexProgress = scanned
