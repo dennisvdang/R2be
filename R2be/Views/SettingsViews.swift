@@ -307,6 +307,7 @@ struct SettingsView: View {
     @AppStorage("thumbnailsEnabled") private var thumbnailsEnabled = true
     @AppStorage("presignHours") private var presignHours = 6.0
     @AppStorage("disableShare") private var disableShare = true
+    @AppStorage("rewindCache") private var rewindCache = true
     @State private var downloads = DownloadStore.shared
     @State private var confirmRemoveDownloads = false
     @State private var confirmSignOut = false
@@ -345,6 +346,7 @@ struct SettingsView: View {
                 Toggle("Shuffle", isOn: $player.shuffle)
                 Toggle("Loop queue at the end", isOn: $player.loopQueue)
                 Stepper("Stream link lifetime: \(Int(presignHours)) h", value: $presignHours, in: 1...72, step: 1)
+                Toggle("Instant rewind", isOn: $rewindCache)
             }
             Section {
                 Toggle("Disable share button", isOn: $disableShare)

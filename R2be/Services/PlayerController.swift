@@ -61,6 +61,10 @@ final class PlayerController {
     /// When the current item's signed link was made, to replace it before it expires.
     @ObservationIgnored private var linkCreated = Date.distantPast
     @ObservationIgnored private var retriedExpiredLink = false
+    /// Byte cache for the current video so rewinds don't re-download (see StreamCache).
+    @ObservationIgnored private var streamCache: StreamCache?
+    /// After a playback failure the retry skips the cache, in case the cache was the problem.
+    @ObservationIgnored private var bypassCacheFor: String?
 
     /// True once the current link is within 5 minutes of expiring (e.g. paused overnight).
     private var linkIsStale: Bool {
@@ -278,6 +282,8 @@ final class PlayerController {
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []; order = []; position = 0
+        streamCache?.invalidate()
+        streamCache = nil
         cancelSleepTimer()
         context = .none
         isPresented = false
@@ -334,7 +340,7 @@ final class PlayerController {
         currentTime = 0
         duration = ResumeStore.duration(for: item.id) ?? 0
 
-        let asset = AVURLAsset(url: url)
+        let asset = makeAsset(for: item, url: url)
         let playerItem = AVPlayerItem(asset: asset)
         // Stay up to a minute ahead so short drops in Wi-Fi/cellular speed don't stall playback.
         playerItem.preferredForwardBufferDuration = 60
@@ -353,6 +359,7 @@ final class PlayerController {
                 if status == .failed, !self.retriedExpiredLink {
                     // Most often an expired or rejected link: try once more with a fresh one.
                     self.retriedExpiredLink = true
+                    self.bypassCacheFor = item.id
                     self.reloadWithFreshLink()
                 } else if status == .failed {
                     self.errorMessage = "Can't play this file. \(message ?? "") (MP4/MOV with H.264/HEVC work best.)"
@@ -371,6 +378,27 @@ final class PlayerController {
         player.playImmediately(atRate: rate)
         updateNowPlaying()
         loadArtwork(for: item)
+    }
+
+    private func makeAsset(for item: VideoItem, url: URL) -> AVURLAsset {
+        let enabled = UserDefaults.standard.object(forKey: "rewindCache") as? Bool ?? true
+        let usable = enabled && !url.isFileURL && url.pathExtension.lowercased() != "m3u8"
+            && bypassCacheFor != item.id && !player.isExternalPlaybackActive   // AirPlay needs the real URL
+        guard usable else {
+            streamCache?.invalidate()
+            streamCache = nil
+            return AVURLAsset(url: url)
+        }
+        if let cache = streamCache, cache.itemID == item.id {
+            cache.updateRemoteURL(url)        // same video, fresh link: keep what's cached
+        } else {
+            streamCache?.invalidate()         // new video: drop the old one's bytes
+            streamCache = StreamCache(itemID: item.id, remoteURL: url)
+        }
+        let cache = streamCache!
+        let asset = AVURLAsset(url: cache.assetURL)
+        asset.resourceLoader.setDelegate(cache, queue: cache.queue)
+        return asset
     }
 
     private func itemDidFinish() {
