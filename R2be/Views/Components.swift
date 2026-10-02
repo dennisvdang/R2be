@@ -173,13 +173,31 @@ struct VideoCell: View {
 struct FolderCell: View {
     let folder: FolderInfo
     let layout: GalleryLayout
+    @Environment(LibraryStore.self) private var library
+    @Environment(FolderCoverStore.self) private var covers
+
+    private var customCover: UIImage? { covers.image(bucket: library.activeBucket, prefix: folder.prefix) }
+
+    /// A picked photo, cropped to the 16:9 tile.
+    private func coverImage(_ img: UIImage) -> some View {
+        Color.clear
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(Image(uiImage: img).resizable().scaledToFill())
+            .clipped()
+    }
 
     var body: some View {
         switch layout {
         case .list:
             HStack(spacing: 12) {
-                Image(systemName: "folder.fill").font(.title2).foregroundStyle(.yellow)
-                    .frame(width: 128, height: 40)
+                Group {
+                    if let img = customCover {
+                        coverImage(img).frame(width: 128).clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Image(systemName: "folder.fill").font(.title2).foregroundStyle(.yellow)
+                            .frame(width: 128, height: 40)
+                    }
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(folder.name).font(.subheadline.weight(.medium)).lineLimit(1)
                     Text("\(folder.videoCount) videos").font(.caption).foregroundStyle(.secondary)
@@ -195,7 +213,8 @@ struct FolderCell: View {
                     // Stacked-cards look so folders read differently from videos at a glance.
                     RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.22)).padding(.horizontal, 10).offset(y: -6)
                     Group {
-                        if let cover = folder.cover { ThumbnailView(item: cover, showsBadges: false) }
+                        if let img = customCover { coverImage(img) }
+                        else if let cover = folder.cover { ThumbnailView(item: cover, showsBadges: false) }
                         else { Color(white: 0.15).aspectRatio(16 / 9, contentMode: .fit) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: layout == .cards ? 14 : 8))
@@ -247,6 +266,7 @@ struct FolderMenu: View {
     let onAddToPlaylist: ([PlaylistEntry]) -> Void
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @Environment(FolderCoverStore.self) private var covers
 
     var body: some View {
         Button {
@@ -261,6 +281,15 @@ struct FolderMenu: View {
             onAddToPlaylist(entries)
         } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
         RecentPlaylistButton(entries: entries)
+        Divider()
+        Button {
+            covers.requestPicker(bucket: library.activeBucket, prefix: folder.prefix)
+        } label: { Label("Set Cover Image…", systemImage: "photo") }
+        if covers.hasCover(bucket: library.activeBucket, prefix: folder.prefix) {
+            Button(role: .destructive) {
+                covers.removeCover(bucket: library.activeBucket, prefix: folder.prefix)
+            } label: { Label("Remove Cover Image", systemImage: "trash") }
+        }
     }
 }
 

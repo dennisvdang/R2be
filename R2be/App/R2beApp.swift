@@ -1,4 +1,5 @@
 import AVFoundation
+import PhotosUI
 import SwiftUI
 
 /// Only here to let the player lock orientation for fullscreen (see `Orientation`).
@@ -13,6 +14,7 @@ struct R2beApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var library: LibraryStore
     @State private var playlists = PlaylistStore()
+    @State private var covers = FolderCoverStore()
     @State private var player: PlayerController
 
     init() {
@@ -31,6 +33,7 @@ struct R2beApp: App {
                 .environment(library)
                 .environment(playlists)
                 .environment(player)
+                .environment(covers)
                 .preferredColorScheme(.dark)
                 .tint(.red)
         }
@@ -42,8 +45,10 @@ enum AppTab: Hashable { case library, feed, playlists, settings }
 struct RootView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerController.self) private var player
+    @Environment(FolderCoverStore.self) private var covers
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .library
+    @State private var pickedCover: PhotosPickerItem?
 
     var body: some View {
         @Bindable var player = player
@@ -79,6 +84,18 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $player.isPresented) {
             PlayerView()
+        }
+        // One photo picker for "Set Cover Image" on any folder (see FolderMenu).
+        .photosPicker(isPresented: Binding(get: { covers.isPickerPresented }, set: { covers.isPickerPresented = $0 }),
+                      selection: $pickedCover, matching: .images)
+        .onChange(of: pickedCover) { _, item in
+            guard let item, let target = covers.pickerTarget else { return }
+            pickedCover = nil
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    covers.setCover(data, for: target)
+                }
+            }
         }
     }
 }
