@@ -243,7 +243,10 @@ final class PlayerController {
 
     func seek(to seconds: Double) {
         currentTime = seconds
-        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        // Up to 1.5 s either way lets AVPlayer land on a nearby keyframe instead of fetching the
+        // previous keyframe and decoding forward to the exact frame, so seeks start sooner.
+        let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
             Task { @MainActor in self?.updateNowPlaying() }
         }
     }
@@ -333,7 +336,8 @@ final class PlayerController {
 
         let asset = AVURLAsset(url: url)
         let playerItem = AVPlayerItem(asset: asset)
-        playerItem.preferredForwardBufferDuration = 10
+        // Stay up to a minute ahead so short drops in Wi-Fi/cellular speed don't stall playback.
+        playerItem.preferredForwardBufferDuration = 60
 
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification,
