@@ -207,7 +207,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Re-index bucket now")
                         Spacer()
-                        if library.isIndexing { ProgressView(); Text("\(library.indexProgress)").font(.caption) }
+                        if library.isIndexing { ProgressView(); Text("\(library.indexMatches.formatted()) videos").font(.caption) }
                     }
                 }
                 .disabled(library.isIndexing)

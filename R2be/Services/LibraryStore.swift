@@ -31,7 +31,8 @@ final class LibraryStore {
     private(set) var credentials: R2Credentials?
     private(set) var indexes: [String: BucketIndex] = [:]
     var isIndexing = false
-    var indexProgress = 0
+    var indexProgress = 0       // keys scanned so far
+    var indexMatches = 0        // video keys found so far
     var lastError: String?
 
     @ObservationIgnored private var folderCache: [String: FolderContents] = [:]
@@ -74,11 +75,16 @@ final class LibraryStore {
         let bucket = activeBucket
         isIndexing = true
         indexProgress = 0
+        indexMatches = 0
         lastError = nil
         refreshTask = Task {
             do {
-                let objects = try await client.listAllObjects(bucket: bucket) { n in
-                    Task { @MainActor [weak self] in self?.indexProgress = n }
+                let objects = try await client.listAllObjects(bucket: bucket, include: Self.isIndexable) { scanned, pageKept in
+                    let videos = pageKept.filter { MediaTypes.playable.contains(($0.key as NSString).pathExtension.lowercased()) }.count
+                    Task { @MainActor [weak self] in
+                        self?.indexProgress = scanned
+                        self?.indexMatches += videos
+                    }
                 }
                 let index = Self.buildIndex(bucket: bucket, objects: objects)
                 self.indexes[bucket] = index
@@ -103,12 +109,18 @@ final class LibraryStore {
         refresh()
     }
 
+    /// Videos, plus images that may be sidecar thumbnails. Everything else is dropped while listing.
+    nonisolated static func isIndexable(_ o: R2Object) -> Bool {
+        if o.key.hasSuffix("/") { return false }                       // folder placeholder objects
+        if o.key.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { return false } // ._AppleDouble, .DS_Store, hidden dirs
+        let ext = (o.key as NSString).pathExtension.lowercased()
+        return MediaTypes.playable.contains(ext) || MediaTypes.images.contains(ext)
+    }
+
     nonisolated static func buildIndex(bucket: String, objects: [R2Object]) -> BucketIndex {
         var videos: [VideoItem] = []
         var images = Set<String>()
-        for o in objects {
-            if o.key.hasSuffix("/") { continue }                       // folder placeholder objects
-            if o.key.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { continue } // ._AppleDouble, .DS_Store, hidden dirs
+        for o in objects where isIndexable(o) {
             let ext = (o.key as NSString).pathExtension.lowercased()
             if MediaTypes.playable.contains(ext) {
                 videos.append(VideoItem(bucket: bucket, key: o.key, size: o.size, lastModified: o.lastModified, etag: o.etag))

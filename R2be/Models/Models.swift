@@ -25,8 +25,9 @@ struct VideoItem: Identifiable, Hashable, Codable, Sendable {
 }
 
 enum MediaTypes {
-    /// Containers AVPlayer can stream natively. MKV/AVI/WebM need transcoding to MP4 first.
-    static let playable: Set<String> = ["mp4", "m4v", "mov", "m3u8", "3gp", "mp3", "m4a"]
+    /// Video containers AVPlayer can stream natively. Only these are indexed and shown; everything
+    /// else in the bucket is skipped. MKV/AVI/WebM need transcoding to MP4 first.
+    static let playable: Set<String> = ["mp4", "m4v", "mov", "m3u8", "3gp"]
     static let unplayableVideo: Set<String> = ["mkv", "avi", "webm", "wmv", "flv"]
     static let images: Set<String> = ["jpg", "jpeg", "png", "webp"]
 }

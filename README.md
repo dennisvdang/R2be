@@ -19,7 +19,7 @@ An iPhone app that turns a Cloudflare R2 bucket into a personal media server. Yo
 | **Thumbnails** | Grabbed from a frame about 10% into each video and only the bytes needed are streamed. They're cached on the phone. If you put `clip.jpg` (or `clip.mp4.jpg`, or `thumbs/clip.jpg`) next to `clip.mp4`, the app uses that image instead. |
 | **Resume** | Remembers where you stopped in each video. A red progress bar shows on the thumbnails. |
 
-**Formats:** MP4, MOV and M4V (H.264/HEVC), HLS `.m3u8`, and MP3/M4A. iOS can't play MKV, AVI or WebM natively, so those are hidden. You can convert them with `ffmpeg -i in.mkv -c copy -movflags +faststart out.mp4`. The `+faststart` flag also makes seeking and thumbnails faster for any MP4.
+**Formats:** only video files are indexed and shown: MP4, MOV, M4V and 3GP (H.264/HEVC) and HLS `.m3u8`. Everything else in the bucket (documents, audio, archives, …) is skipped. iOS can't play MKV, AVI or WebM natively, so those are hidden too. You can convert them with `ffmpeg -i in.mkv -c copy -movflags +faststart out.mp4`. The `+faststart` flag also makes seeking and thumbnails faster for any MP4.
 
 ---
 

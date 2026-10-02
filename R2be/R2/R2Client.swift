@@ -121,19 +121,26 @@ struct R2Client: Sendable {
         return page
     }
 
-    /// Walks every page of the bucket (no delimiter) and returns all objects.
+    /// Walks every page of the bucket (no delimiter) and returns the objects `include` accepts.
+    /// S3 listing can't filter by extension server-side, so every key is still scanned, but rejected
+    /// ones are dropped page by page. `progress` gets the running scanned count and the objects
+    /// kept from the latest page.
     func listAllObjects(bucket: String, prefix: String = "",
-                        progress: (@Sendable (Int) -> Void)? = nil) async throws -> [R2Object] {
-        var all: [R2Object] = []
+                        include: @Sendable (R2Object) -> Bool = { _ in true },
+                        progress: (@Sendable (Int, [R2Object]) -> Void)? = nil) async throws -> [R2Object] {
+        var kept: [R2Object] = []
+        var scanned = 0
         var token: String?
         repeat {
             try Task.checkCancellation()
             let page = try await listObjects(bucket: bucket, prefix: prefix, continuationToken: token)
-            all.append(contentsOf: page.objects)
-            progress?(all.count)
+            scanned += page.objects.count
+            let pageKept = page.objects.filter(include)
+            kept.append(contentsOf: pageKept)
+            progress?(scanned, pageKept)
             token = page.isTruncated ? page.nextContinuationToken : nil
         } while token != nil
-        return all
+        return kept
     }
 
     private func get(_ url: URL) async throws -> Data {
