@@ -224,7 +224,8 @@ struct PlaylistDetailView: View {
             }
             .padding(.vertical, 8)
         }
-        .searchable(text: $query, prompt: "Search this playlist")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search this playlist")
     }
 
     private func sourcesTab(_ p: Playlist) -> some View {

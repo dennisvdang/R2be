@@ -72,7 +72,8 @@ struct FolderView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(isRoot ? .large : .inline)
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: isRoot ? .always : .automatic),
+        // .always pins the search field in the navigation bar so it stays put while scrolling.
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "Search file names")
         .searchScopes($scope) {
             if !isRoot { Text("This folder").tag(SearchScope.folder) }
