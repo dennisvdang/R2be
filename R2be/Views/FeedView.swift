@@ -228,6 +228,7 @@ private struct FeedPage: View {
             }
             railButton("arrow.up.left.and.arrow.down.right", "Expand") {
                 if !isLive { start() }
+                player.startFullscreen = true
                 player.isPresented = true
             }
         }

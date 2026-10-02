@@ -29,6 +29,7 @@ final class PlayerController {
     private(set) var sourceTitle = ""
 
     var isPresented = false          // full-screen player sheet
+    var startFullscreen = false      // open the player straight into landscape fullscreen (Feed → Expand)
     private(set) var isPlaying = false
     private(set) var isBuffering = false
     private(set) var currentTime: Double = 0
@@ -42,7 +43,8 @@ final class PlayerController {
     var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
-    var loopQueue: Bool = UserDefaults.standard.bool(forKey: "loopQueue") {
+    /// On by default: after the last video the queue starts over, and Up Next shows that wrap-around.
+    var loopQueue: Bool = UserDefaults.standard.object(forKey: "loopQueue") as? Bool ?? true {
         didSet { UserDefaults.standard.set(loopQueue, forKey: "loopQueue") }
     }
     var rate: Float = 1.0 {
@@ -80,10 +82,14 @@ final class PlayerController {
         guard order.indices.contains(position), queue.indices.contains(order[position]) else { return nil }
         return queue[order[position]]
     }
-    var upNext: [VideoItem] {
-        guard position + 1 < order.count else { return [] }
-        return order[(position + 1)...].map { queue[$0] }
+    /// Positions in `order` that will play after the current one, in play order. With loop on this
+    /// wraps around, so starting on the last video still lists everything before it.
+    private var upNextPositions: [Int] {
+        guard order.indices.contains(position) else { return [] }
+        let after = Array((position + 1)..<order.count)
+        return loopQueue ? after + Array(0..<position) : after
     }
+    var upNext: [VideoItem] { upNextPositions.map { queue[order[$0]] } }
     var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) }
     var hasPrevious: Bool { position > 0 || currentTime > 5 }
 
@@ -146,7 +152,9 @@ final class PlayerController {
     }
 
     func removeFromUpNext(at offsets: IndexSet) {
-        let absolute = IndexSet(offsets.map { $0 + position + 1 })
+        let positions = upNextPositions
+        let absolute = IndexSet(offsets.compactMap { positions.indices.contains($0) ? positions[$0] : nil })
+        position -= absolute.count(in: 0..<position)
         order.remove(atOffsets: absolute)
     }
 
@@ -189,11 +197,7 @@ final class PlayerController {
         if position + 1 < order.count {
             position += 1
         } else if loopQueue, !order.isEmpty {
-            if shuffle {
-                let last = order[position]
-                order.shuffle()
-                if order.count > 1, order[0] == last { order.swapAt(0, 1) }
-            }
+            // Keep the same order so what plays matches what Up Next showed. Reshuffle is in Up Next.
             position = 0
         } else {
             return false

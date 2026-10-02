@@ -64,7 +64,7 @@ struct FolderView: View {
 
                 if !isSearching && contents.subfolders.isEmpty && contents.videos.isEmpty && !library.isIndexing {
                     ContentUnavailableView("No videos here", systemImage: "film.stack",
-                                           description: Text("Supported: MP4, MOV, M4V, HLS (.m3u8)."))
+                                           description: Text("Supported: MP4, MOV, M4V, 3GP, HLS (.m3u8), MP3, M4A, FLAC, WAV."))
                         .padding(.top, 40)
                 }
             }
@@ -139,19 +139,28 @@ struct FolderView: View {
                 }
                 if sort == .random { Button("Reshuffle order", systemImage: "dice") { randomSeed += 1 } }
                 Toggle("Show folders", isOn: $showFolders)
-                Divider()
-                Button(selection == nil ? "Select videos" : "Done selecting",
-                       systemImage: "checkmark.circle") {
-                    selection = selection == nil ? [] : nil
-                }
                 if !isRoot {
-                    Button("Add folder to playlist…", systemImage: "folder.badge.plus") {
-                        pendingAdd = PendingPlaylistAdd(entries: [.folder(bucket: library.activeBucket, prefix: prefix, recursive: true)])
+                    Divider()
+                    Button("Add all videos here to playlist…", systemImage: "text.badge.plus") {
+                        pendingAdd = PendingPlaylistAdd(entries: allVideosHere.map { .video(bucket: $0.bucket, key: $0.key) })
                     }
                 }
             } label: {
                 Image(systemName: layout.symbol)
             }
+        }
+        // Bulk add: always visible, including while searching.
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                selection = selection == nil ? [] : nil
+            } label: {
+                if selection == nil {
+                    Image(systemName: "checklist")
+                } else {
+                    Text("Done").bold()
+                }
+            }
+            .accessibilityLabel(selection == nil ? "Select videos" : "Done selecting")
         }
         if isRoot && library.isIndexing && !library.allVideos.isEmpty {
             ToolbarItem(placement: .topBarLeading) { ProgressView() }
@@ -163,27 +172,34 @@ struct FolderView: View {
         return Binding(get: { selection ?? [] }, set: { selection = $0 })
     }
 
+    /// Picks survive changing the search text, so you can select across several searches.
     private var selectedVideos: [VideoItem] {
-        guard let selection else { return [] }
-        return visibleVideos.filter { selection.contains($0.id) }
+        guard let selection, !selection.isEmpty else { return [] }
+        return library.allVideos.filter { selection.contains($0.id) }
+    }
+    private var allVisibleSelected: Bool {
+        guard let selection, !visibleVideos.isEmpty else { return false }
+        return visibleVideos.allSatisfy { selection.contains($0.id) }
     }
 
     private var selectionBar: some View {
         HStack(spacing: 10) {
-            Button(selectedVideos.count == visibleVideos.count ? "None" : "All") {
-                selection = selectedVideos.count == visibleVideos.count ? [] : Set(visibleVideos.map(\.id))
+            Button(allVisibleSelected ? "None" : "All") {
+                let ids = Set(visibleVideos.map(\.id))
+                selection = allVisibleSelected ? (selection ?? []).subtracting(ids) : (selection ?? []).union(ids)
             }
             .frame(width: 50)
-            PillButton(title: "Play \(selectedVideos.count)", systemImage: "play.fill", prominent: true) {
-                player.play(selectedVideos, context: .selection, title: "Selection")
-                selection = nil
-            }
-            .disabled(selectedVideos.isEmpty)
-            PillButton(title: "Playlist", systemImage: "text.badge.plus") {
+            PillButton(title: "Add \(selectedVideos.count) to Playlist", systemImage: "text.badge.plus", prominent: true) {
                 pendingAdd = PendingPlaylistAdd(entries: selectedVideos.map { .video(bucket: $0.bucket, key: $0.key) })
                 selection = nil
             }
             .disabled(selectedVideos.isEmpty)
+            PillButton(title: "Play", systemImage: "play.fill") {
+                player.play(selectedVideos, context: .selection, title: "Selection")
+                selection = nil
+            }
+            .disabled(selectedVideos.isEmpty)
+            .frame(width: 96)
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.ultraThinMaterial)

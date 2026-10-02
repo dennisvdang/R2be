@@ -1,8 +1,16 @@
 import AVFoundation
 import SwiftUI
 
+/// Only here to let the player lock orientation for fullscreen (see `Orientation`).
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        Orientation.lock
+    }
+}
+
 @main
 struct R2beApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var library: LibraryStore
     @State private var playlists = PlaylistStore()
     @State private var player: PlayerController

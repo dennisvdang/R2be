@@ -256,11 +256,8 @@ struct FolderMenu: View {
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
         Button {
-            onAddToPlaylist([.folder(bucket: library.activeBucket, prefix: folder.prefix, recursive: true)])
-        } label: { Label("Add Folder + Subfolders to Playlist…", systemImage: "folder.badge.plus") }
-        Button {
-            onAddToPlaylist([.folder(bucket: library.activeBucket, prefix: folder.prefix, recursive: false)])
-        } label: { Label("Add This Folder Only to Playlist…", systemImage: "folder") }
+            onAddToPlaylist(library.videos(under: folder.prefix, recursive: true).map { .video(bucket: $0.bucket, key: $0.key) })
+        } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
     }
 }
 
@@ -299,20 +296,27 @@ struct AddToPlaylistSheet: View {
                     Text("Playlists live in the app only. Nothing in your bucket is moved or changed.")
                 }
                 if !store.playlists.isEmpty {
-                    Section("Add to existing") {
+                    Section {
                         ForEach(store.playlists) { p in
+                            let fresh = store.newEntries(pending.entries, for: p.id)
                             Button {
-                                store.add(pending.entries, to: p.id)
+                                store.add(fresh, to: p.id)
                                 dismiss()
                             } label: {
                                 HStack {
-                                    Image(systemName: "music.note.list").foregroundStyle(.red)
-                                    Text(p.name).foregroundStyle(.primary)
+                                    Image(systemName: store.isFavorites(p.id) ? "heart.fill" : "music.note.list").foregroundStyle(.red)
+                                    Text(p.name).foregroundStyle(fresh.isEmpty ? Color.secondary : Color.primary)
                                     Spacer()
-                                    Text("\(p.entries.count) items").font(.caption).foregroundStyle(.secondary)
+                                    Text(addLabel(fresh: fresh.count, total: pending.entries.count))
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
+                            .disabled(fresh.isEmpty)
                         }
+                    } header: {
+                        Text("Add to existing")
+                    } footer: {
+                        Text("Videos already in a playlist are skipped, so nothing is added twice.")
                     }
                 }
             }
@@ -321,6 +325,12 @@ struct AddToPlaylistSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func addLabel(fresh: Int, total: Int) -> String {
+        if fresh == 0 { return total == 1 ? "Already added" : "All already added" }
+        if fresh == total { return "+\(fresh)" }
+        return "+\(fresh) new · \(total - fresh) already added"
     }
 
     private func createNew() {
@@ -396,6 +406,7 @@ struct PillButton: View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(prominent ? Color.white : Color(white: 0.18), in: Capsule())

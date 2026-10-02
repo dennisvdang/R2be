@@ -8,14 +8,28 @@ import SwiftUI // Array.move(fromOffsets:toOffset:)
 final class PlaylistStore {
     private(set) var playlists: [Playlist] = []
 
-    init() { load() }
+    /// Built-in playlist that always exists, so there's somewhere to save videos from day one.
+    static let favoritesID = UUID(uuidString: "00000000-0000-0000-0000-00000000FA7E")!
+
+    init() {
+        load()
+        ensureFavorites()
+    }
+
+    func isFavorites(_ id: Playlist.ID) -> Bool { id == Self.favoritesID }
+
+    /// Videos in `entries` that aren't in the playlist yet.
+    func newEntries(_ entries: [PlaylistEntry], for id: Playlist.ID) -> [PlaylistEntry] {
+        let existing = Set(playlist(id)?.entries.map(\.id) ?? [])
+        return Self.dedupe(entries).filter { !existing.contains($0.id) }
+    }
 
     func playlist(_ id: Playlist.ID) -> Playlist? { playlists.first { $0.id == id } }
 
     @discardableResult
     func create(name: String, entries: [PlaylistEntry] = []) -> Playlist {
         let p = Playlist(name: name.isEmpty ? "New Playlist" : name, entries: Self.dedupe(entries))
-        playlists.insert(p, at: 0)
+        playlists.insert(p, at: playlists.first?.id == Self.favoritesID ? 1 : 0)   // Favorites stays on top
         save()
         return p
     }
@@ -23,6 +37,7 @@ final class PlaylistStore {
     func rename(_ id: Playlist.ID, to name: String) { mutate(id) { $0.name = name } }
 
     func delete(_ id: Playlist.ID) {
+        guard id != Self.favoritesID else { return }
         playlists.removeAll { $0.id == id }
         save()
     }
@@ -49,6 +64,15 @@ final class PlaylistStore {
     func duplicate(_ id: Playlist.ID) {
         guard let p = playlist(id) else { return }
         create(name: p.name + " copy", entries: p.entries)
+    }
+
+    private func ensureFavorites() {
+        if let i = playlists.firstIndex(where: { $0.id == Self.favoritesID }) {
+            if i != 0 { playlists.insert(playlists.remove(at: i), at: 0); save() }
+        } else {
+            playlists.insert(Playlist(id: Self.favoritesID, name: "Favorites"), at: 0)
+            save()
+        }
     }
 
     private func mutate(_ id: Playlist.ID, _ change: (inout Playlist) -> Void) {

@@ -37,7 +37,14 @@ struct PlayerView: View {
         }
         .persistentSystemOverlays(.hidden)
         .sheet(item: $pendingAdd) { AddToPlaylistSheet(pending: $0) }
-        .onAppear { scheduleHide() }
+        .onAppear {
+            scheduleHide()
+            if player.startFullscreen {
+                player.startFullscreen = false
+                Orientation.enterFullscreen()
+            }
+        }
+        .onDisappear { if Orientation.isFullscreen { Orientation.exitFullscreen() } }
         .onChange(of: player.isPlaying) { _, playing in if playing { scheduleHide() } else { showControls(autoHide: false) } }
     }
 
@@ -218,13 +225,15 @@ private struct ControlsOverlay: View {
                 Spacer()
                 toggle("shuffle", on: player.shuffle) { player.shuffle.toggle() }
                 toggle(player.autoplay ? "play.square.stack.fill" : "play.square.stack", on: player.autoplay) { player.autoplay.toggle() }
-                toggle(fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", on: fill) {
-                    withAnimation { fill.toggle() }
-                }
-                if !landscape {
-                    toggle("rotate.right", on: false) { Orientation.request(.landscapeRight) }
+                if landscape {
+                    // Zoom to fill the screen (crops the edges) vs. fit the whole picture.
+                    toggle(fill ? "aspectratio.fill" : "aspectratio", on: fill) {
+                        withAnimation { fill.toggle() }
+                    }
+                    toggle("arrow.down.right.and.arrow.up.left", on: false) { Orientation.exitFullscreen() }
                 } else {
-                    toggle("rotate.left", on: false) { Orientation.request(.portrait) }
+                    // Goes fullscreen landscape even while the phone is upright; turn the phone after.
+                    toggle("arrow.up.left.and.arrow.down.right", on: false) { Orientation.enterFullscreen() }
                 }
             }
             .font(.caption.monospacedDigit())
@@ -332,13 +341,68 @@ private struct PlayerInfoPanel: View {
     }
 }
 
-// MARK: - Orientation helper
+// MARK: - Orientation / fullscreen
 
+/// Fullscreen for the player. Entering locks the app to landscape even while the phone is still
+/// upright, so you can tap Expand and then turn the phone (like YouTube). Leaving locks portrait
+/// until the phone is actually held upright again, then normal auto-rotation resumes.
+@MainActor
 enum Orientation {
-    @MainActor
-    static func request(_ mask: UIInterfaceOrientationMask) {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+    /// Read by AppDelegate.supportedInterfaceOrientationsFor.
+    private(set) static var lock: UIInterfaceOrientationMask = .allButUpsideDown
+    static var isFullscreen: Bool { lock == .landscape }
+    private static var uprightObserver: NSObjectProtocol?
+
+    static func enterFullscreen() {
+        stopWaitingForUpright()
+        apply(.landscape)
+    }
+
+    static func exitFullscreen() {
+        apply(.portrait)
+        let device = UIDevice.current.orientation
+        if device == .portrait || !device.isValidInterfaceOrientation {
+            release()
+            return
+        }
+        // Phone is still sideways: stay portrait until it's turned upright, or it would flip straight back.
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        stopWaitingForUpright()
+        uprightObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if UIDevice.current.orientation == .portrait { Orientation.release() }
+            }
+        }
+    }
+
+    private static func release() {
+        stopWaitingForUpright()
+        lock = .allButUpsideDown
+        refreshSupportedOrientations()
+    }
+
+    private static func stopWaitingForUpright() {
+        if let uprightObserver { NotificationCenter.default.removeObserver(uprightObserver) }
+        uprightObserver = nil
+    }
+
+    private static func apply(_ mask: UIInterfaceOrientationMask) {
+        lock = mask
+        refreshSupportedOrientations()
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
+
+    /// Every controller in the presentation chain (the player is a full-screen cover) must re-query.
+    private static func refreshSupportedOrientations() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for window in scenes.flatMap(\.windows) {
+            var vc = window.rootViewController
+            while let current = vc {
+                current.setNeedsUpdateOfSupportedInterfaceOrientations()
+                vc = current.presentedViewController
+            }
+        }
     }
 }
