@@ -18,6 +18,15 @@ final class PlaylistStore {
 
     func isFavorites(_ id: Playlist.ID) -> Bool { id == Self.favoritesID }
 
+    /// The playlist videos were most recently added to, offered as a one-tap option in menus.
+    private(set) var recentID: Playlist.ID? = UserDefaults.standard.string(forKey: "recentPlaylistID").flatMap { UUID(uuidString: $0) }
+    var recentPlaylist: Playlist? { recentID.flatMap(playlist) }
+
+    private func markRecent(_ id: Playlist.ID) {
+        recentID = id
+        UserDefaults.standard.set(id.uuidString, forKey: "recentPlaylistID")
+    }
+
     /// Videos in `entries` that aren't in the playlist yet.
     func newEntries(_ entries: [PlaylistEntry], for id: Playlist.ID) -> [PlaylistEntry] {
         let existing = Set(playlist(id)?.entries.map(\.id) ?? [])
@@ -30,6 +39,7 @@ final class PlaylistStore {
     func create(name: String, entries: [PlaylistEntry] = []) -> Playlist {
         let p = Playlist(name: name.isEmpty ? "New Playlist" : name, entries: Self.dedupe(entries))
         playlists.insert(p, at: playlists.first?.id == Self.favoritesID ? 1 : 0)   // Favorites stays on top
+        if !entries.isEmpty { markRecent(p.id) }
         save()
         return p
     }
@@ -43,6 +53,7 @@ final class PlaylistStore {
     }
 
     func add(_ entries: [PlaylistEntry], to id: Playlist.ID) {
+        markRecent(id)
         mutate(id) { $0.entries = Self.dedupe($0.entries + entries) }
     }
 

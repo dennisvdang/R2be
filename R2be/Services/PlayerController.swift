@@ -57,6 +57,15 @@ final class PlayerController {
     @ObservationIgnored private var itemStatusObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var lastResumeSave = Date.distantPast
+    /// When the current item's signed link was made, to replace it before it expires.
+    @ObservationIgnored private var linkCreated = Date.distantPast
+    @ObservationIgnored private var retriedExpiredLink = false
+
+    /// True once the current link is within 5 minutes of expiring (e.g. paused overnight).
+    private var linkIsStale: Bool {
+        let lifetime = library?.streamLinkLifetime ?? 6 * 3600
+        return Date().timeIntervalSince(linkCreated) > lifetime - 300
+    }
 
     static let skipInterval: Double = 30
 
@@ -169,6 +178,7 @@ final class PlayerController {
 
     func resume() {
         if current == nil { return }
+        if linkIsStale { reloadWithFreshLink(); return }
         if duration > 0, currentTime >= duration - 0.5 { seek(to: 0) }
         player.playImmediately(atRate: rate)
     }
@@ -256,8 +266,16 @@ final class PlayerController {
         }
     }
 
-    private func loadCurrent() {
+    /// Same video, same position, new signed link.
+    private func reloadWithFreshLink() {
+        saveResume(force: true)
+        loadCurrent(isRetry: true)
+    }
+
+    private func loadCurrent(isRetry: Bool = false) {
         guard let item = current, let url = library?.streamURL(for: item) else { return }
+        linkCreated = Date()
+        if !isRetry { retriedExpiredLink = false }
         errorMessage = nil
         currentTime = 0
         duration = ResumeStore.duration(for: item.id) ?? 0
@@ -277,7 +295,11 @@ final class PlayerController {
             let seconds = CMTimeGetSeconds(it.duration)
             Task { @MainActor in
                 guard let self else { return }
-                if status == .failed {
+                if status == .failed, !self.retriedExpiredLink {
+                    // Most often an expired or rejected link: try once more with a fresh one.
+                    self.retriedExpiredLink = true
+                    self.reloadWithFreshLink()
+                } else if status == .failed {
                     self.errorMessage = "Can't play this file. \(message ?? "") (MP4/MOV with H.264/HEVC work best.)"
                 } else if status == .readyToPlay, seconds.isFinite, seconds > 0 {
                     self.duration = seconds

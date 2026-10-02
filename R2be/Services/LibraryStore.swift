@@ -221,9 +221,16 @@ final class LibraryStore {
 
     // MARK: URLs
 
-    func streamURL(for item: VideoItem) -> URL? {
+    /// How long a stream link stays valid (Settings → Stream link lifetime, default 6 h).
+    var streamLinkLifetime: TimeInterval {
         let hours = UserDefaults.standard.double(forKey: "presignHours")
-        return client?.presignedURL(bucket: item.bucket, key: item.key, expires: (hours > 0 ? hours : 6) * 3600)
+        return (hours > 0 ? hours : 6) * 3600
+    }
+
+    /// A fresh signed link every call. Playlists store only bucket + key, never a link, so they
+    /// can't go stale; the player asks for a new link each time it loads a video.
+    func streamURL(for item: VideoItem) -> URL? {
+        client?.presignedURL(bucket: item.bucket, key: item.key, expires: streamLinkLifetime)
     }
 
     /// Optional sidecar thumbnail: "clip.jpg" or "clip.mp4.jpg" next to "clip.mp4", or a

@@ -144,6 +144,7 @@ struct FolderView: View {
                     Button("Add all videos here to playlist…", systemImage: "text.badge.plus") {
                         pendingAdd = PendingPlaylistAdd(entries: allVideosHere.map { .video(bucket: $0.bucket, key: $0.key) })
                     }
+                    RecentPlaylistButton(entries: allVideosHere.map { .video(bucket: $0.bucket, key: $0.key) })
                 }
             } label: {
                 Image(systemName: layout.symbol)

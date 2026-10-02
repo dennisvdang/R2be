@@ -233,6 +233,7 @@ struct VideoMenu: View {
         Button { onAddToPlaylist([.video(bucket: item.bucket, key: item.key)]) } label: {
             Label("Add to Playlist…", systemImage: "music.note.list")
         }
+        RecentPlaylistButton(entries: [.video(bucket: item.bucket, key: item.key)])
         Divider()
         Button { UIPasteboard.general.string = item.fileName } label: { Label("Copy File Name", systemImage: "doc.on.doc") }
         if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
@@ -255,13 +256,35 @@ struct FolderMenu: View {
             player.shufflePlay(library.videos(under: folder.prefix, recursive: true), context: .folder(folder.prefix), title: folder.name)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
+        let entries = library.videos(under: folder.prefix, recursive: true).map { PlaylistEntry.video(bucket: $0.bucket, key: $0.key) }
         Button {
-            onAddToPlaylist(library.videos(under: folder.prefix, recursive: true).map { .video(bucket: $0.bucket, key: $0.key) })
+            onAddToPlaylist(entries)
         } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
+        RecentPlaylistButton(entries: entries)
     }
 }
 
 // MARK: - Add to playlist
+
+/// Menu item shown right under "Add to Playlist…": one tap adds to the playlist used last.
+struct RecentPlaylistButton: View {
+    let entries: [PlaylistEntry]
+    @Environment(PlaylistStore.self) private var store
+
+    var body: some View {
+        if let p = store.recentPlaylist {
+            let fresh = store.newEntries(entries, for: p.id)
+            Button {
+                store.add(fresh, to: p.id)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } label: {
+                Label(fresh.isEmpty ? "Already in \(p.name)" : "Add to \(p.name)",
+                      systemImage: store.isFavorites(p.id) ? "heart" : "music.note")
+            }
+            .disabled(fresh.isEmpty)
+        }
+    }
+}
 
 struct PendingPlaylistAdd: Identifiable {
     let id = UUID()
