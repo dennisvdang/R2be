@@ -48,7 +48,22 @@ final class PlayerController {
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var lastResumeSave = Date.distantPast
 
-    static let skipInterval: Double = 30
+    enum SkipUnit: String, CaseIterable { case seconds, keyframes }
+
+    var skipUnit = SkipUnit(rawValue: UserDefaults.standard.string(forKey: "skipUnit") ?? "") ?? .seconds {
+        didSet { UserDefaults.standard.set(skipUnit.rawValue, forKey: "skipUnit"); updateRemoteSkip() }
+    }
+    var rewindAmount: Double = UserDefaults.standard.object(forKey: "rewindAmount") as? Double ?? 10 {
+        didSet { UserDefaults.standard.set(rewindAmount, forKey: "rewindAmount"); updateRemoteSkip() }
+    }
+    var forwardAmount: Double = UserDefaults.standard.object(forKey: "forwardAmount") as? Double ?? 30 {
+        didSet { UserDefaults.standard.set(forwardAmount, forKey: "forwardAmount"); updateRemoteSkip() }
+    }
+
+    /// Where an in-flight seek is headed. While set, the time readout holds this value instead of
+    /// the player's stale position, so the scrubber doesn't snap back before the seek lands.
+    @ObservationIgnored private var seekTarget: Double?
+    @ObservationIgnored private var seekGeneration = 0
 
     init() {
         player.allowsExternalPlayback = true
@@ -161,7 +176,55 @@ final class PlayerController {
         saveResume(force: true)
     }
 
-    func skip(_ seconds: Double) {
+    func skipForward() { skip(forward: true) }
+    func skipBackward() { skip(forward: false) }
+
+    private func skip(forward: Bool) {
+        let amount = forward ? forwardAmount : rewindAmount
+        guard skipUnit == .keyframes else { skip(forward ? amount : -amount); return }
+        let from = currentTime
+        Task {
+            if let t = await keyframeTime(from: from, count: forward ? Int(amount) : -Int(amount)) { seek(to: t) }
+            else { skip(forward ? amount : -amount) }
+        }
+    }
+
+    /// Presentation time `count` keyframes away from `t` (negative = backwards), or nil when the
+    /// stream can't expose its sample table (e.g. HLS).
+    private func keyframeTime(from t: Double, count: Int) async -> Double? {
+        guard let asset = player.currentItem?.asset,
+              let track = try? await asset.loadTracks(withMediaType: .video).first,
+              (try? await track.load(.canProvideSampleCursors)) == true,
+              let cursor = track.makeSampleCursor(presentationTimeStamp: CMTime(seconds: t, preferredTimescale: 600))
+        else { return nil }
+        let step: Int64 = count > 0 ? 1 : -1
+        var found = 0
+        while found < abs(count), cursor.stepInPresentationOrder(byCount: step) == step {
+            if cursor.currentSampleSyncInfo.sampleIsFullSync.boolValue { found += 1 }
+        }
+        return found > 0 ? CMTimeGetSeconds(cursor.presentationTimeStamp) : nil
+    }
+
+    /// "+30s" / "−3 keyframes", for the double-tap bubble and buttons.
+    func skipLabel(forward: Bool) -> String {
+        let n = Int(forward ? forwardAmount : rewindAmount)
+        return (forward ? "+" : "−") + (skipUnit == .seconds ? "\(n)s" : "\(n) keyframe\(n == 1 ? "" : "s")")
+    }
+
+    /// Numbered SF Symbol when one exists for the amount, plain arrow otherwise.
+    func skipSymbol(forward: Bool) -> String {
+        let n = Int(forward ? forwardAmount : rewindAmount)
+        let base = forward ? "goforward" : "gobackward"
+        return skipUnit == .seconds && [5, 10, 15, 30, 45, 60].contains(n) ? "\(base).\(n)" : base
+    }
+
+    private func updateRemoteSkip() {
+        let c = MPRemoteCommandCenter.shared()
+        c.skipForwardCommand.preferredIntervals = [NSNumber(value: forwardAmount)]
+        c.skipBackwardCommand.preferredIntervals = [NSNumber(value: rewindAmount)]
+    }
+
+    private func skip(_ seconds: Double) {
         let target = currentTime + seconds
         if duration > 0, target >= duration { seek(to: max(duration - 0.5, 0)); return }
         seek(to: max(target, 0))
@@ -169,8 +232,17 @@ final class PlayerController {
 
     func seek(to seconds: Double) {
         currentTime = seconds
+        seekTarget = seconds
+        seekGeneration += 1
+        let generation = seekGeneration
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            Task { @MainActor in self?.updateNowPlaying() }
+            Task { @MainActor in
+
+                // Only the latest seek releases the hold; superseded ones finish silently.
+                guard let self, generation == self.seekGeneration else { return }
+                self.seekTarget = nil
+                self.updateNowPlaying()
+            }
         }
     }
 
@@ -273,11 +345,10 @@ final class PlayerController {
             }
         }
 
+        seekTarget = nil
+        seekGeneration += 1
         player.replaceCurrentItem(with: playerItem)
-        if let resume = ResumeStore.position(for: item.id) {
-            player.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
-            currentTime = resume
-        }
+        if let resume = ResumeStore.position(for: item.id) { seek(to: resume) }
         player.playImmediately(atRate: rate)
         updateNowPlaying()
         loadArtwork(for: item)
@@ -290,7 +361,7 @@ final class PlayerController {
     }
 
     private func tick(_ t: CMTime) {
-        guard !isScrubbing else { return }
+        guard !isScrubbing, seekTarget == nil else { return }
         let s = CMTimeGetSeconds(t)
         if s.isFinite { currentTime = s }
         if let d = player.currentItem?.duration, CMTimeGetSeconds(d).isFinite, CMTimeGetSeconds(d) > 0 {
@@ -315,10 +386,9 @@ final class PlayerController {
         c.togglePlayPauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.togglePlay() }; return .success }
         c.nextTrackCommand.addTarget { [weak self] _ in Task { @MainActor in _ = self?.next() }; return .success }
         c.previousTrackCommand.addTarget { [weak self] _ in Task { @MainActor in self?.previous() }; return .success }
-        c.skipForwardCommand.preferredIntervals = [NSNumber(value: Self.skipInterval)]
-        c.skipBackwardCommand.preferredIntervals = [NSNumber(value: Self.skipInterval)]
-        c.skipForwardCommand.addTarget { [weak self] _ in Task { @MainActor in self?.skip(PlayerController.skipInterval) }; return .success }
-        c.skipBackwardCommand.addTarget { [weak self] _ in Task { @MainActor in self?.skip(-PlayerController.skipInterval) }; return .success }
+        updateRemoteSkip()
+        c.skipForwardCommand.addTarget { [weak self] _ in Task { @MainActor in self?.skipForward() }; return .success }
+        c.skipBackwardCommand.addTarget { [weak self] _ in Task { @MainActor in self?.skipBackward() }; return .success }
         c.changePlaybackPositionCommand.addTarget { [weak self] e in
             guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let t = e.positionTime

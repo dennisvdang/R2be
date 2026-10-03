@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct SetupView: View {
-    var isInitialSetup = false
+    let isInitialSetup: Bool
 
     /// The saved connection being edited; nil adds a new one.
-    var editing: R2Credentials? = nil
+    let editing: R2Credentials?
     @Environment(LibraryStore.self) private var library
     @Environment(\.dismiss) private var dismiss
 
@@ -18,6 +18,20 @@ struct SetupView: View {
     @State private var testing = false
     @State private var status: String?
     @State private var ok = false
+
+    // Fields start from the saved connection here, not in onAppear, so a redraw of Settings
+    // during the push (e.g. indexing progress after a bucket switch) can't leave them blank.
+    init(isInitialSetup: Bool = false, editing: R2Credentials? = nil) {
+        self.isInitialSetup = isInitialSetup
+        self.editing = editing
+        guard let c = editing else { return }
+        _accountId = State(initialValue: c.accountId)
+        _accessKeyId = State(initialValue: c.accessKeyId)
+        _secret = State(initialValue: c.secretAccessKey)
+        _bucket = State(initialValue: c.bucket)
+        _jurisdiction = State(initialValue: c.jurisdiction)
+        _folders = State(initialValue: c.prefixes.filter { !$0.isEmpty }.map { FolderField(path: String($0.dropLast())) })
+    }
 
     /// One editable folder row; the id keeps rows stable when one is deleted.
     private struct FolderField: Identifiable {
@@ -112,12 +126,9 @@ struct SetupView: View {
         .textInputAutocapitalization(.never)
         .navigationTitle(isInitialSetup ? "Welcome" : editing == nil ? "Add bucket" : "Edit connection")
         .onAppear {
-            if let c = editing {
-                accountId = c.accountId; accessKeyId = c.accessKeyId; secret = c.secretAccessKey
-                bucket = c.bucket; jurisdiction = c.jurisdiction
-                folders = c.prefixes.filter { !$0.isEmpty }.map { FolderField(path: String($0.dropLast())) }
-            } else if let c = library.credentials {
-                // A new bucket usually lives in the same account; its token may differ.
+
+            // A new bucket usually lives in the same account; its token may differ.
+            if editing == nil, accountId.isEmpty, let c = library.credentials {
                 accountId = c.accountId; jurisdiction = c.jurisdiction
             }
         }
@@ -207,6 +218,12 @@ struct SettingsView: View {
                 Toggle("Autoplay next video", isOn: $player.autoplay)
                 Toggle("Shuffle", isOn: $player.shuffle)
                 Toggle("Loop queue at the end", isOn: $player.loopQueue)
+                Picker("Skip by", selection: $player.skipUnit) {
+                    Text("Seconds").tag(PlayerController.SkipUnit.seconds)
+                    Text("Keyframes").tag(PlayerController.SkipUnit.keyframes)
+                }
+                skipSlider("Rewind", value: $player.rewindAmount)
+                skipSlider("Fast forward", value: $player.forwardAmount)
                 Stepper("Stream link lifetime: \(Int(presignHours)) h", value: $presignHours, in: 1...72, step: 1)
             }
             Section {
@@ -236,6 +253,15 @@ struct SettingsView: View {
                 if player.current?.bucket == b || library.connections.count == 1 { player.stop() }
                 library.remove(bucket: b)
             }
+        }
+    }
+
+    private func skipSlider(_ title: String, value: Binding<Double>) -> some View {
+        let n = Int(value.wrappedValue)
+        let unit = player.skipUnit == .seconds ? "s" : n == 1 ? " keyframe" : " keyframes"
+        return VStack(alignment: .leading, spacing: 4) {
+            LabeledContent(title, value: "\(n)\(unit)")
+            Slider(value: value, in: 1...30, step: 1)
         }
     }
 }

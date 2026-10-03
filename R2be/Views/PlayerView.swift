@@ -111,7 +111,7 @@ struct PlayerView: View {
     }
 
     private func doubleTap(forward: Bool) {
-        player.skip(forward ? PlayerController.skipInterval : -PlayerController.skipInterval)
+        forward ? player.skipForward() : player.skipBackward()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(duration: 0.25)) { flash = forward }
         flashTask?.cancel()
@@ -193,7 +193,7 @@ private struct ControlsOverlay: View {
 
     private var transport: some View {
         HStack(spacing: landscape ? 48 : 26) {
-            control("gobackward.30", size: 26) { player.skip(-PlayerController.skipInterval) }
+            control(player.skipSymbol(forward: false), size: 26) { player.skipBackward() }
             control("backward.end.fill", size: 24) { player.previous() }
             Button { player.togglePlay(); onInteract() } label: {
                 ZStack {
@@ -205,7 +205,7 @@ private struct ControlsOverlay: View {
             }
             control("forward.end.fill", size: 24) { player.next() }
                 .disabled(!player.hasNext).opacity(player.hasNext ? 1 : 0.4)
-            control("goforward.30", size: 26) { player.skip(PlayerController.skipInterval) }
+            control(player.skipSymbol(forward: true), size: 26) { player.skipForward() }
         }
     }
 
@@ -235,13 +235,16 @@ private struct ControlsOverlay: View {
             }
             .font(.caption.monospacedDigit())
 
+            // The drag owns the value from its first change; on release the seek holds the
+            // handle at the drop point until the player catches up.
             Slider(value: Binding(get: { player.isScrubbing ? scrubValue : player.currentTime },
-                                  set: { scrubValue = $0 }),
+                                  set: { scrubValue = $0; player.isScrubbing = true }),
                    in: 0...max(player.duration, 1),
                    onEditingChanged: { editing in
-                if editing { scrubValue = player.currentTime }
-                player.isScrubbing = editing
-                if !editing { player.seek(to: scrubValue) }
+                if !editing {
+                    player.seek(to: scrubValue)
+                    player.isScrubbing = false
+                }
                 onInteract()
             })
             .tint(.red)

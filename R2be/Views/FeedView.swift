@@ -220,8 +220,8 @@ private struct FeedPage: View {
 
     private var actionRail: some View {
         VStack(spacing: 20) {
-            railButton("gobackward.30", "−30") { if isLive { player.skip(-PlayerController.skipInterval) } }
-            railButton("goforward.30", "+30") { if isLive { player.skip(PlayerController.skipInterval) } }
+            railButton(player.skipSymbol(forward: false), player.skipLabel(forward: false)) { if isLive { player.skipBackward() } }
+            railButton(player.skipSymbol(forward: true), player.skipLabel(forward: true)) { if isLive { player.skipForward() } }
             railButton("text.badge.plus", "Save", action: save)
             if let url = library.shareURL(for: item) {
                 ShareLink(item: url) { railLabel("arrowshape.turn.up.right.fill", "Share") }
@@ -267,7 +267,7 @@ private struct FeedPage: View {
         Color.clear.contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 guard isLive else { return }
-                player.skip(forward ? PlayerController.skipInterval : -PlayerController.skipInterval)
+                forward ? player.skipForward() : player.skipBackward()
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 withAnimation(.spring(duration: 0.25)) { flash = forward }
                 flashTask?.cancel()

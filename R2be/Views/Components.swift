@@ -385,13 +385,14 @@ extension View {
     }
 }
 
-/// Big translucent "« 30" / "30 »" bubble shown on double-tap, YouTube-style.
+/// Big translucent skip bubble shown on double-tap, YouTube-style.
 struct SeekFlash: View {
     let forward: Bool
+    @Environment(PlayerController.self) private var player
     var body: some View {
         VStack(spacing: 4) {
-            Image(systemName: forward ? "goforward.30" : "gobackward.30").font(.system(size: 34, weight: .semibold))
-            Text(forward ? "+30s" : "−30s").font(.caption.weight(.bold))
+            Image(systemName: player.skipSymbol(forward: forward)).font(.system(size: 34, weight: .semibold))
+            Text(player.skipLabel(forward: forward)).font(.caption.weight(.bold))
         }
         .foregroundStyle(.white)
         .padding(22)
