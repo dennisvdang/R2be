@@ -18,14 +18,30 @@ struct R2Credentials: Codable, Hashable, Sendable {
     var bucket: String
     var jurisdiction: Jurisdiction = .standard
 
-    /// Only this folder is indexed; nil or empty indexes the whole bucket.
-    /// Optional so connections saved before this field existed still decode.
+    /// Folders to index, separated by commas or newlines; nil or empty indexes the whole bucket.
+    /// One optional string so connections saved by older builds still decode.
     var folder: String?
 
-    /// `folder` as a list prefix: "dfvl/clips" → "dfvl/clips/", empty → "".
+    /// Each folder as a list prefix ("videos/movies" → "videos/movies/"), with folders nested
+    /// inside another listed folder dropped. [""] means the whole bucket.
+    var prefixes: [String] {
+        let all = (folder ?? "").split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) }
+            .filter { !$0.isEmpty }
+            .map { $0 + "/" }
+        let kept = Set(all).filter { p in !all.contains { $0 != p && p.hasPrefix($0) } }.sorted()
+        return kept.isEmpty ? [""] : kept
+    }
+
+    /// Where the Library opens: the deepest folder every prefix shares.
     var rootPrefix: String {
-        let f = (folder ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
-        return f.isEmpty ? "" : f + "/"
+        let parts = prefixes.map { $0.split(separator: "/") }
+        var common: [Substring] = []
+        for (i, name) in (parts.first ?? []).enumerated() {
+            guard parts.allSatisfy({ $0.count > i && $0[i] == name }) else { break }
+            common.append(name)
+        }
+        return common.isEmpty ? "" : common.joined(separator: "/") + "/"
     }
 
     var endpoint: URL {

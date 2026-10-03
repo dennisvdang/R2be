@@ -11,6 +11,7 @@ struct FolderView: View {
     @AppStorage("galleryLayout") private var layoutRaw = GalleryLayout.grid.rawValue
     @AppStorage("sortOrder") private var sortRaw = SortOrder.nameAsc.rawValue
     @AppStorage("foldersFirst") private var showFolders = true
+    @AppStorage("flattenFolders") private var flatten = false
 
     @State private var query = ""
     @State private var scope: SearchScope = .everywhere
@@ -28,7 +29,8 @@ struct FolderView: View {
 
     private var contents: FolderContents { library.contents(of: prefix) }
     private var visibleVideos: [VideoItem] {
-        let base = isSearching ? library.search(query, in: scope == .folder ? prefix : "") : contents.videos
+        let base = isSearching ? library.search(query, in: scope == .folder ? prefix : "")
+            : flatten ? allVideosHere : contents.videos
         guard sort == .random else { return sort.apply(base) }
         // Stable "random" order: only changes when you tap Reshuffle, not on every redraw.
         let seed = randomSeed
@@ -54,7 +56,7 @@ struct FolderView: View {
                 }
 
                 VideoGallery(
-                    folders: isSearching || !showFolders ? [] : contents.subfolders,
+                    folders: isSearching || flatten || !showFolders ? [] : contents.subfolders,
                     videos: visibleVideos,
                     layout: layout,
                     showFolderPath: isSearching,
@@ -137,7 +139,8 @@ struct FolderView: View {
                     ForEach(SortOrder.allCases) { Text($0.label).tag($0.rawValue) }
                 }
                 if sort == .random { Button("Reshuffle order", systemImage: "dice") { randomSeed += 1 } }
-                Toggle("Show folders", isOn: $showFolders)
+                Toggle("Flatten folders", isOn: $flatten)
+                Toggle("Show folders", isOn: $showFolders).disabled(flatten)
                 Divider()
                 Button(selection == nil ? "Select videos" : "Done selecting",
                        systemImage: "checkmark.circle") {

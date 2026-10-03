@@ -46,7 +46,8 @@ final class LibraryStore {
 
     private struct PartialIndex {
         let bucket: String
-        let prefix: String
+        let prefixes: [String]
+        var done = 0                // prefixes fully listed
         var videos: [VideoItem] = []
         var imageKeys = Set<String>()
         var scanned = 0
@@ -124,26 +125,27 @@ final class LibraryStore {
         guard let client = client(for: activeBucket) else { return }
         refreshTask?.cancel()
         let bucket = activeBucket
-        let prefix = rootPrefix
-        let resume = partial.flatMap { $0.bucket == bucket && $0.prefix == prefix ? $0 : nil }
-            ?? PartialIndex(bucket: bucket, prefix: prefix)
+        let prefixes = credentials?.prefixes ?? [""]
+        let resume = partial.flatMap { $0.bucket == bucket && $0.prefixes == prefixes ? $0 : nil }
+            ?? PartialIndex(bucket: bucket, prefixes: prefixes)
         isIndexing = true
         indexProgress = resume.scanned
         lastError = nil
         refreshTask = Task {
             var run = resume
             do {
-                repeat {
-                    let page = try await client.listObjects(bucket: bucket, prefix: prefix, continuationToken: run.token)
+                while run.done < prefixes.count {
+                    let page = try await client.listObjects(bucket: bucket, prefix: prefixes[run.done], continuationToken: run.token)
                     try Task.checkCancellation()
                     let part = Self.buildIndex(bucket: bucket, objects: page.objects)
                     run.videos += part.videos
                     run.imageKeys.formUnion(part.imageKeys)
                     run.scanned += page.objects.count
                     run.token = page.isTruncated ? page.nextContinuationToken : nil
+                    if run.token == nil { run.done += 1 }
                     self.partial = run
                     self.indexProgress = run.scanned
-                } while run.token != nil
+                }
 
                 self.partial = nil
                 let index = BucketIndex(bucket: bucket, videos: run.videos, imageKeys: run.imageKeys, builtAt: Date())

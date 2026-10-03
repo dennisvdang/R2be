@@ -372,6 +372,19 @@ struct AirPlayButton: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
+extension View {
+    /// Spread two fingers on a video to fill the screen (cropping the edges); pinch to fit the whole frame again.
+    func pinchToFill(_ fill: Binding<Bool>) -> some View {
+        simultaneousGesture(
+            MagnifyGesture().onEnded { v in
+                let wantFill = v.magnification > 1.1 ? true : v.magnification < 0.9 ? false : fill.wrappedValue
+                guard wantFill != fill.wrappedValue else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation { fill.wrappedValue = wantFill }
+            })
+    }
+}
+
 /// Big translucent "« 30" / "30 »" bubble shown on double-tap, YouTube-style.
 struct SeekFlash: View {
     let forward: Bool

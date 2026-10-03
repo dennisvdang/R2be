@@ -86,6 +86,9 @@ struct RootView: View {
         .fullScreenCover(isPresented: $player.isPresented) {
             PlayerView()
         }
+
+        // Any scroll closes the keyboard, so a search field never stays stuck open.
+        .scrollDismissesKeyboard(.immediately)
     }
 
     private func endIndexingTask() {

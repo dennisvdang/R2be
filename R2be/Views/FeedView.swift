@@ -158,6 +158,7 @@ private struct FeedPage: View {
 
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @AppStorage("feedFill") private var fill = false
     @State private var flash: Bool?
     @State private var flashTask: Task<Void, Never>?
 
@@ -165,7 +166,7 @@ private struct FeedPage: View {
         ZStack {
             Color.black
             if isLive {
-                VideoSurface(player: player.player, gravity: .resizeAspect)
+                VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect)
             } else {
                 ThumbnailView(item: item, showsBadges: false)
             }
@@ -214,6 +215,7 @@ private struct FeedPage: View {
             .foregroundStyle(.white)
         }
         .clipped()
+        .pinchToFill($fill)
     }
 
     private var actionRail: some View {

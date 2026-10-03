@@ -24,6 +24,10 @@ struct PlayerView: View {
                 if landscape {
                     videoArea(landscape: true)
                         .ignoresSafeArea()
+                } else if fill {
+
+                    // Portrait fill: the video takes the whole screen and the info panel hides.
+                    videoArea(landscape: false)
                 } else {
                     VStack(spacing: 0) {
                         videoArea(landscape: false)
@@ -46,6 +50,7 @@ struct PlayerView: View {
     private func videoArea(landscape: Bool) -> some View {
         ZStack {
             VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect)
+                .ignoresSafeArea(edges: fill ? .all : [])
 
             // Gesture layer: single tap toggles controls, double tap left/right skips 30 s.
             HStack(spacing: 0) {
@@ -83,6 +88,7 @@ struct PlayerView: View {
             }
         }
         .contentShape(Rectangle())
+        .pinchToFill($fill)
         .gesture(
             DragGesture(minimumDistance: 20)
                 .onChanged { v in if v.translation.height > 0 && abs(v.translation.height) > abs(v.translation.width) { dragOffset = v.translation.height } }
@@ -265,7 +271,7 @@ private struct PlayerInfoPanel: View {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.title).font(.headline).lineLimit(3)
-                        Text([player.sourceTitle, item.folderDisplay, Format.bytes(item.size), Format.relative(item.lastModified)]
+                        Text([player.duration > 0 ? Format.duration(player.duration) : "", Format.relative(item.lastModified)]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary)
                     }
