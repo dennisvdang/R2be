@@ -32,10 +32,15 @@ final class LibraryStore {
     private(set) var activeBucket: String
     private(set) var indexes: [String: BucketIndex] = [:]
     var isIndexing = false
-    var indexProgress = 0
+    var indexProgress = 0       // keys scanned so far
+    var indexMatches = 0        // playable (video/audio) keys found so far
     var lastError: String?
 
-    @ObservationIgnored private var folderCache: [String: FolderContents] = [:]
+    @ObservationIgnored private var folderCache: [String: FolderContents] = [:] {
+        didSet { if folderCache.isEmpty { seriesCache = nil } }
+    }
+    /// Series stem → videos, built lazily for Related (see `related(to:)`).
+    @ObservationIgnored private var seriesCache: [String: [VideoItem]]?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
@@ -130,6 +135,7 @@ final class LibraryStore {
             ?? PartialIndex(bucket: bucket, prefixes: prefixes)
         isIndexing = true
         indexProgress = resume.scanned
+        indexMatches = resume.videos.count
         lastError = nil
         refreshTask = Task {
             var run = resume
@@ -145,6 +151,7 @@ final class LibraryStore {
                     if run.token == nil { run.done += 1 }
                     self.partial = run
                     self.indexProgress = run.scanned
+                    self.indexMatches = run.videos.count
                 }
 
                 self.partial = nil
@@ -175,12 +182,18 @@ final class LibraryStore {
         refresh()
     }
 
+    /// Videos, plus images that may be sidecar thumbnails. Everything else is dropped while listing.
+    nonisolated static func isIndexable(_ o: R2Object) -> Bool {
+        if o.key.hasSuffix("/") { return false }                       // folder placeholder objects
+        if o.key.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { return false } // ._AppleDouble, .DS_Store, hidden dirs
+        let ext = (o.key as NSString).pathExtension.lowercased()
+        return MediaTypes.playable.contains(ext) || MediaTypes.images.contains(ext)
+    }
+
     nonisolated static func buildIndex(bucket: String, objects: [R2Object]) -> BucketIndex {
         var videos: [VideoItem] = []
         var images = Set<String>()
-        for o in objects {
-            if o.key.hasSuffix("/") { continue }                       // folder placeholder objects
-            if o.key.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { continue } // ._AppleDouble, .DS_Store, hidden dirs
+        for o in objects where isIndexable(o) {
             let ext = (o.key as NSString).pathExtension.lowercased()
             if MediaTypes.playable.contains(ext) {
                 videos.append(VideoItem(bucket: bucket, key: o.key, size: o.size, lastModified: o.lastModified, etag: o.etag))
@@ -233,6 +246,38 @@ final class LibraryStore {
         return allVideos.filter { $0.key.hasPrefix(prefix) && SearchMatcher.matches($0, tokens: tokens) }
     }
 
+    // MARK: Related
+
+    /// Other parts of the same video: files whose names match once a trailing part marker is
+    /// removed, e.g. "Trip-pt1", "Trip pt 2", "Trip_part03", "Trip (4)" → "trip". Matching is on the
+    /// whole remaining name, so "pt1" alone never links unrelated videos. Includes `item`, in part order.
+    func related(to item: VideoItem) -> [VideoItem] {
+        let stem = Self.seriesStem(item.title)
+        guard stem.count >= 2 else { return [] }
+        if seriesCache == nil {
+            seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
+        }
+        let parts = seriesCache?[stem] ?? []
+        guard parts.count > 1 else { return [] }
+        return parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    nonisolated static func seriesStem(_ title: String) -> String {
+        var s = title.lowercased()
+            .replacingOccurrences(of: "[._]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        let markers = [
+            "(?:^|[\\s\\-–])(?:pt|part|ep|episode|e|disc|cd|vol|volume|chapter|ch)\\s*\\d{1,3}$",   // -pt1, part 02, ep3
+            "\\s*\\(\\d{1,3}\\)$",                                                             // (2)
+            "(?:\\s*[\\-–#]\\s*|\\s+)\\d{1,2}$",                                                 // " 2", "-3", "#4"
+        ]
+        for pattern in markers {
+            if let r = s.range(of: pattern, options: .regularExpression) { s.removeSubrange(r); break }
+        }
+        return s.trimmingCharacters(in: CharacterSet(charactersIn: " -–#"))
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+
     func video(bucket: String, key: String) -> VideoItem? {
         index(for: bucket)?.videos.first { $0.key == key }
     }
@@ -263,14 +308,30 @@ final class LibraryStore {
 
     // MARK: URLs
 
-    func streamURL(for item: VideoItem) -> URL? {
+    /// How long a stream link stays valid (Settings → Stream link lifetime, default 6 h).
+    var streamLinkLifetime: TimeInterval {
         let hours = UserDefaults.standard.double(forKey: "presignHours")
-        return client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: (hours > 0 ? hours : 6) * 3600)
+        return (hours > 0 ? hours : 6) * 3600
+    }
+
+    /// The downloaded copy if there is one (works offline), otherwise a fresh signed link. Playlists
+    /// store only bucket + key, never a link, so they can't go stale.
+    func streamURL(for item: VideoItem) -> URL? {
+        if let local = DownloadStore.shared.localURL(for: item) { return local }
+        return client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: streamLinkLifetime)
     }
 
     /// 24-hour link for the share sheet.
     func shareURL(for item: VideoItem) -> URL? {
         client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600)
+    }
+
+    /// Start offline downloads (skips ones already downloaded or in progress).
+    func download(_ items: [VideoItem]) {
+        for item in items where !DownloadStore.shared.isDownloaded(item) && !DownloadStore.shared.isDownloading(item) {
+            guard let url = shareURL(for: item) else { continue }
+            DownloadStore.shared.download(item, from: url)
+        }
     }
 
     /// Optional sidecar thumbnail: "clip.jpg" or "clip.mp4.jpg" next to "clip.mp4", or a

@@ -63,6 +63,7 @@ struct R2Object: Hashable, Codable, Sendable {
 
 struct ListPage: Sendable {
     var objects: [R2Object] = []
+    var commonPrefixes: [String] = []
     var isTruncated = false
     var nextContinuationToken: String?
 }
@@ -131,14 +132,30 @@ struct R2Client: Sendable {
         return BucketListParser.parse(data)
     }
 
-    func listObjects(bucket: String, prefix: String = "", continuationToken: String? = nil, maxKeys: Int = 1000) async throws -> ListPage {
+    func listObjects(bucket: String, prefix: String = "", delimiter: String? = nil,
+                     continuationToken: String? = nil, maxKeys: Int = 1000) async throws -> ListPage {
         var q = [URLQueryItem(name: "list-type", value: "2"),
                  URLQueryItem(name: "max-keys", value: String(maxKeys))]
         if !prefix.isEmpty { q.append(URLQueryItem(name: "prefix", value: prefix)) }
+        if let delimiter { q.append(URLQueryItem(name: "delimiter", value: delimiter)) }
         if let continuationToken { q.append(URLQueryItem(name: "continuation-token", value: continuationToken)) }
         let data = try await get(bucketURL(bucket, query: q))
         guard let page = ListObjectsParser.parse(data) else { throw R2Error.badResponse }
         return page
+    }
+
+    /// Immediate subfolders of `prefix` (e.g. "Shows/" → ["Shows/A/", "Shows/B/"]), via a "/" delimiter
+    /// listing, so it's cheap even for huge folders.
+    func listFolders(bucket: String, prefix: String = "") async throws -> [String] {
+        var folders: [String] = []
+        var token: String?
+        repeat {
+            try Task.checkCancellation()
+            let page = try await listObjects(bucket: bucket, prefix: prefix, delimiter: "/", continuationToken: token)
+            folders.append(contentsOf: page.commonPrefixes)
+            token = page.isTruncated ? page.nextContinuationToken : nil
+        } while token != nil
+        return folders
     }
 
     private func get(_ url: URL) async throws -> Data {

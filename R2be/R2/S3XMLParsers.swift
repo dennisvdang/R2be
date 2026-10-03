@@ -40,9 +40,11 @@ enum ListObjectsParser {
     static func parse(_ data: Data) -> ListPage? {
         var page = ListPage()
         var current: R2Object?
+        var inPrefixes = false
         let w = XMLWalker()
         w.onStart = { name in
             if name == "Contents" { current = R2Object(key: "", size: 0, lastModified: nil, etag: "") }
+            if name == "CommonPrefixes" { inPrefixes = true }
         }
         w.onEnd = { name, text in
             switch name {
@@ -51,6 +53,8 @@ enum ListObjectsParser {
             case "LastModified": current?.lastModified = S3Date.parse(text)
             case "ETag": current?.etag = text.replacingOccurrences(of: "\"", with: "")
             case "Contents": if let c = current { page.objects.append(c) }; current = nil
+            case "Prefix" where inPrefixes: page.commonPrefixes.append(text)
+            case "CommonPrefixes": inPrefixes = false
             case "IsTruncated": page.isTruncated = (text == "true")
             case "NextContinuationToken": page.nextContinuationToken = text
             default: break

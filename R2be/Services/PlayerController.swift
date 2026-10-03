@@ -10,6 +10,7 @@ import UIKit
 @MainActor
 final class PlayerController {
     let player = AVPlayer()
+    let pip = PiPManager()
 
     private(set) var queue: [VideoItem] = []
     /// Play order as indices into `queue`. Shuffle just permutes this; Up Next reads from it.
@@ -21,6 +22,7 @@ final class PlayerController {
     private(set) var sourceTitle = ""
 
     var isPresented = false          // full-screen player sheet
+    var startFullscreen = false      // open the player straight into landscape fullscreen (Feed → Expand)
     private(set) var isPlaying = false
     private(set) var isBuffering = false
     private(set) var currentTime: Double = 0
@@ -34,7 +36,8 @@ final class PlayerController {
     var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
-    var loopQueue: Bool = UserDefaults.standard.bool(forKey: "loopQueue") {
+    /// On by default: after the last video the queue starts over, and Up Next shows that wrap-around.
+    var loopQueue: Bool = UserDefaults.standard.object(forKey: "loopQueue") as? Bool ?? true {
         didSet { UserDefaults.standard.set(loopQueue, forKey: "loopQueue") }
     }
     var rate: Float = 1.0 {
@@ -47,6 +50,20 @@ final class PlayerController {
     @ObservationIgnored private var itemStatusObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var lastResumeSave = Date.distantPast
+    /// When the current item's signed link was made, to replace it before it expires.
+    @ObservationIgnored private var linkCreated = Date.distantPast
+    @ObservationIgnored private var retriedExpiredLink = false
+    /// Byte cache for the current video so rewinds don't re-download (see StreamCache).
+    @ObservationIgnored private var streamCache: StreamCache?
+    /// After a playback failure the retry skips the cache, in case the cache was the problem.
+    @ObservationIgnored private var bypassCacheFor: String?
+
+    /// True once the current link is within 5 minutes of expiring (e.g. paused overnight).
+    private var linkIsStale: Bool {
+        if let item = current, DownloadStore.shared.isDownloaded(item) { return false }
+        let lifetime = library?.streamLinkLifetime ?? 6 * 3600
+        return Date().timeIntervalSince(linkCreated) > lifetime - 300
+    }
 
     enum SkipUnit: String, CaseIterable { case seconds, keyframes }
 
@@ -79,6 +96,8 @@ final class PlayerController {
             }
         }
         configureRemoteCommands()
+        pip.onWillStart = { [weak self] in self?.isPresented = false }
+        pip.onRestore = { [weak self] in self?.isPresented = true }
     }
 
     // MARK: - Derived
@@ -87,10 +106,14 @@ final class PlayerController {
         guard order.indices.contains(position), queue.indices.contains(order[position]) else { return nil }
         return queue[order[position]]
     }
-    var upNext: [VideoItem] {
-        guard position + 1 < order.count else { return [] }
-        return order[(position + 1)...].map { queue[$0] }
+    /// Positions in `order` that will play after the current one, in play order. With loop on this
+    /// wraps around, so starting on the last video still lists everything before it.
+    private var upNextPositions: [Int] {
+        guard order.indices.contains(position) else { return [] }
+        let after = Array((position + 1)..<order.count)
+        return loopQueue ? after + Array(0..<position) : after
     }
+    var upNext: [VideoItem] { upNextPositions.map { queue[order[$0]] } }
     var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) }
 
     // MARK: - Starting playback
@@ -116,6 +139,13 @@ final class PlayerController {
     /// Shuffle button on a folder/playlist: random first pick, shuffle stays on for what follows.
     func shufflePlay(_ items: [VideoItem], title: String) {
         play(items, startAt: nil, shuffle: true, title: title)
+    }
+
+    /// Play this video now without losing the rest of the queue (used by Related).
+    func playNow(_ item: VideoItem) {
+        if let qi = queue.firstIndex(of: item), order.contains(qi) { jump(to: item); return }
+        playNext(item)
+        next()
     }
 
     func jump(to item: VideoItem) {
@@ -152,7 +182,9 @@ final class PlayerController {
     }
 
     func removeFromUpNext(at offsets: IndexSet) {
-        let absolute = IndexSet(offsets.map { $0 + position + 1 })
+        let positions = upNextPositions
+        let absolute = IndexSet(offsets.compactMap { positions.indices.contains($0) ? positions[$0] : nil })
+        position -= absolute.count(in: 0..<position)
         order.remove(atOffsets: absolute)
     }
 
@@ -161,12 +193,49 @@ final class PlayerController {
         rebuildOrder(keepCurrent: true, forceShuffle: true)
     }
 
+    // MARK: - Sleep timer
+
+    enum SleepTimer: Equatable {
+        case off
+        case at(Date)            // pause at this time
+        case endOfVideo          // pause when the current video finishes
+    }
+    private(set) var sleepTimer: SleepTimer = .off
+    @ObservationIgnored private var sleepTask: Task<Void, Never>?
+
+    func setSleepTimer(minutes: Int) {
+        let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        sleepTimer = .at(end)
+        sleepTask?.cancel()
+        sleepTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Double(minutes * 60)))
+            guard !Task.isCancelled else { return }
+            self?.sleepTimerFired()
+        }
+    }
+
+    func setSleepAtEndOfVideo() {
+        sleepTask?.cancel()
+        sleepTimer = .endOfVideo
+    }
+
+    func cancelSleepTimer() {
+        sleepTask?.cancel()
+        sleepTimer = .off
+    }
+
+    private func sleepTimerFired() {
+        sleepTimer = .off
+        pause()
+    }
+
     // MARK: - Transport
 
     func togglePlay() { isPlaying ? pause() : resume() }
 
     func resume() {
         if current == nil { return }
+        if linkIsStale { reloadWithFreshLink(); return }
         if duration > 0, currentTime >= duration - 0.5 { seek(to: 0) }
         player.playImmediately(atRate: rate)
     }
@@ -235,7 +304,11 @@ final class PlayerController {
         seekTarget = seconds
         seekGeneration += 1
         let generation = seekGeneration
-        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+
+        // Up to 1.5 s either way lets AVPlayer land on a nearby keyframe instead of fetching the
+        // previous keyframe and decoding forward to the exact frame, so seeks start sooner.
+        let tolerance = CMTime(seconds: 1.5, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
             Task { @MainActor in
 
                 // Only the latest seek releases the hold; superseded ones finish silently.
@@ -252,11 +325,7 @@ final class PlayerController {
         if position + 1 < order.count {
             position += 1
         } else if loopQueue, !order.isEmpty {
-            if shuffle {
-                let last = order[position]
-                order.shuffle()
-                if order.count > 1, order[0] == last { order.swapAt(0, 1) }
-            }
+            // Keep the same order so what plays matches what Up Next showed. Reshuffle is in Up Next.
             position = 0
         } else {
             return false
@@ -277,6 +346,9 @@ final class PlayerController {
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []; order = []; position = 0
+        streamCache?.invalidate()
+        streamCache = nil
+        cancelSleepTimer()
         isFeedQueue = false
         isPresented = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -315,15 +387,27 @@ final class PlayerController {
         }
     }
 
-    private func loadCurrent() {
+    /// Same video, same position, new signed link.
+    private func reloadWithFreshLink() {
+        saveResume(force: true)
+        loadCurrent(isRetry: true)
+    }
+
+    private func loadCurrent(isRetry: Bool = false) {
         guard let item = current, let url = library?.streamURL(for: item) else { return }
+        linkCreated = Date()
+        if !isRetry {
+            retriedExpiredLink = false
+            PlayCountStore.increment(item.id)
+        }
         errorMessage = nil
         currentTime = 0
         duration = ResumeStore.duration(for: item.id) ?? 0
 
-        let asset = AVURLAsset(url: url)
+        let asset = makeAsset(for: item, url: url)
         let playerItem = AVPlayerItem(asset: asset)
-        playerItem.preferredForwardBufferDuration = 10
+        // Stay up to a minute ahead so short drops in Wi-Fi/cellular speed don't stall playback.
+        playerItem.preferredForwardBufferDuration = 60
 
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification,
@@ -336,7 +420,12 @@ final class PlayerController {
             let seconds = CMTimeGetSeconds(it.duration)
             Task { @MainActor in
                 guard let self else { return }
-                if status == .failed {
+                if status == .failed, !self.retriedExpiredLink {
+                    // Most often an expired or rejected link: try once more with a fresh one.
+                    self.retriedExpiredLink = true
+                    self.bypassCacheFor = item.id
+                    self.reloadWithFreshLink()
+                } else if status == .failed {
                     self.errorMessage = "Can't play this file. \(message ?? "") (MP4/MOV with H.264/HEVC work best.)"
                 } else if status == .readyToPlay, seconds.isFinite, seconds > 0 {
                     self.duration = seconds
@@ -354,8 +443,30 @@ final class PlayerController {
         loadArtwork(for: item)
     }
 
+    private func makeAsset(for item: VideoItem, url: URL) -> AVURLAsset {
+        let enabled = UserDefaults.standard.object(forKey: "rewindCache") as? Bool ?? true
+        let usable = enabled && !url.isFileURL && url.pathExtension.lowercased() != "m3u8"
+            && bypassCacheFor != item.id && !player.isExternalPlaybackActive   // AirPlay needs the real URL
+        guard usable else {
+            streamCache?.invalidate()
+            streamCache = nil
+            return AVURLAsset(url: url)
+        }
+        if let cache = streamCache, cache.itemID == item.id {
+            cache.updateRemoteURL(url)        // same video, fresh link: keep what's cached
+        } else {
+            streamCache?.invalidate()         // new video: drop the old one's bytes
+            streamCache = StreamCache(itemID: item.id, remoteURL: url)
+        }
+        let cache = streamCache!
+        let asset = AVURLAsset(url: cache.assetURL)
+        asset.resourceLoader.setDelegate(cache, queue: cache.queue)
+        return asset
+    }
+
     private func itemDidFinish() {
         if let item = current { ResumeStore.set(position: duration, duration: duration, for: item.id) }
+        if sleepTimer == .endOfVideo { sleepTimerFired(); isPlaying = false; return }
         if autoplay, next() { return }
         isPlaying = false
     }

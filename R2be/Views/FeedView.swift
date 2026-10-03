@@ -159,14 +159,16 @@ private struct FeedPage: View {
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
     @AppStorage("feedFill") private var fill = false
+    @AppStorage("disableShare") private var disableShare = true
     @State private var flash: Bool?
     @State private var flashTask: Task<Void, Never>?
+    @State private var scrubFraction: Double?     // 0...1 while the progress bar is being dragged
 
     var body: some View {
         ZStack {
             Color.black
             if isLive {
-                VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect)
+                VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect, pip: player.pip)
             } else {
                 ThumbnailView(item: item, showsBadges: false)
             }
@@ -223,11 +225,12 @@ private struct FeedPage: View {
             railButton(player.skipSymbol(forward: false), player.skipLabel(forward: false)) { if isLive { player.skipBackward() } }
             railButton(player.skipSymbol(forward: true), player.skipLabel(forward: true)) { if isLive { player.skipForward() } }
             railButton("text.badge.plus", "Save", action: save)
-            if let url = library.shareURL(for: item) {
+            if !disableShare, let url = library.shareURL(for: item) {
                 ShareLink(item: url) { railLabel("arrowshape.turn.up.right.fill", "Share") }
             }
             railButton("arrow.up.left.and.arrow.down.right", "Expand") {
                 if !isLive { start() }
+                player.startFullscreen = true
                 player.isPresented = true
             }
         }
@@ -246,21 +249,58 @@ private struct FeedPage: View {
         .foregroundStyle(.white)
     }
 
+    /// Scrubbable progress bar: drag (or tap) anywhere along it. The touch area is much taller
+    /// than the thin bar, and the drag takes priority over the Feed's vertical paging.
     @ViewBuilder private var progress: some View {
+        let live = isLive && player.duration > 0
+        let scrubbing = scrubFraction != nil
         GeometryReader { g in
-            let p = isLive && player.duration > 0 ? min(player.currentTime / player.duration, 1) : 0
-            ZStack(alignment: .leading) {
-                Rectangle().fill(.white.opacity(0.2))
-                Rectangle().fill(.red).frame(width: g.size.width * p)
+            let p = scrubFraction ?? (live ? min(player.currentTime / player.duration, 1) : 0)
+            let barHeight: CGFloat = scrubbing ? 6 : 3
+            let knob: CGFloat = scrubbing ? 16 : 10
+            ZStack(alignment: .bottomLeading) {
+                Color.clear
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.25))
+                    Capsule().fill(.red).frame(width: max(g.size.width * p, barHeight))
+                    if live {
+                        Circle().fill(.white)
+                            .frame(width: knob, height: knob)
+                            .offset(x: min(max(g.size.width * p - knob / 2, 0), g.size.width - knob))
+                            .shadow(radius: 2)
+                    }
+                }
+                .frame(height: barHeight)
+                .padding(.bottom, 6)
+                .animation(.easeOut(duration: 0.15), value: scrubbing)
             }
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onEnded { v in
-                guard isLive, player.duration > 0 else { return }
-                player.seek(to: max(0, min(v.location.x / g.size.width, 1)) * player.duration)
-            })
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        guard live else { return }
+                        player.isScrubbing = true
+                        scrubFraction = max(0, min(v.location.x / max(g.size.width, 1), 1))
+                    }
+                    .onEnded { v in
+                        guard live else { return }
+                        let f = max(0, min(v.location.x / max(g.size.width, 1), 1))
+                        player.seek(to: f * player.duration)
+                        player.isScrubbing = false
+                        scrubFraction = nil
+                    })
         }
-        .frame(height: 3)
-        .padding(.bottom, 1)
+        .frame(height: 30)
+        .overlay(alignment: .top) {
+            if let f = scrubFraction {
+                Text("\(Format.duration(f * player.duration)) / \(Format.duration(player.duration))")
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.black.opacity(0.7), in: Capsule())
+                    .offset(y: -36)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func tapZone(_ forward: Bool) -> some View {

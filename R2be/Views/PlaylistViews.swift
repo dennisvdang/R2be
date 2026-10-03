@@ -20,7 +20,7 @@ struct PlaylistsView: View {
                 ContentUnavailableView {
                     Label("No playlists yet", systemImage: "music.note.list")
                 } description: {
-                    Text("Long-press any video or folder → Add to Playlist. Folders stay live: new uploads show up automatically. Nothing in R2 is changed.")
+                    Text("Tap ☑︎ in the Library to pick videos, or long-press a video → Add to Playlist. Nothing in R2 is changed.")
                 } actions: {
                     Button("New Playlist") { creating = true }.buttonStyle(.borderedProminent)
                 }
@@ -35,14 +35,16 @@ struct PlaylistsView: View {
                         HStack {
                             Image(systemName: mergeSelection.contains(p.id) ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(mergeSelection.contains(p.id) ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
-                            PlaylistRow(playlist: p, videos: videos)
+                            PlaylistRow(playlist: p, videos: videos, isFavorites: store.isFavorites(p.id))
                         }
                     }
                     .buttonStyle(.plain)
                 } else {
-                    NavigationLink(value: p.id) { PlaylistRow(playlist: p, videos: videos) }
+                    NavigationLink(value: p.id) { PlaylistRow(playlist: p, videos: videos, isFavorites: store.isFavorites(p.id)) }
                         .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) { store.delete(p.id) } label: { Label("Delete", systemImage: "trash") }
+                            if !store.isFavorites(p.id) {
+                                Button(role: .destructive) { store.delete(p.id) } label: { Label("Delete", systemImage: "trash") }
+                            }
                             Button { renameText = p.name; renaming = p } label: { Label("Rename", systemImage: "pencil") }
                         }
                         .swipeActions(edge: .leading) {
@@ -56,7 +58,9 @@ struct PlaylistsView: View {
                             Button("Shuffle", systemImage: "shuffle") { player.shufflePlay(videos, title: p.name) }
                             Button("Rename", systemImage: "pencil") { renameText = p.name; renaming = p }
                             Button("Duplicate", systemImage: "plus.square.on.square") { store.duplicate(p.id) }
-                            Button("Delete", systemImage: "trash", role: .destructive) { store.delete(p.id) }
+                            if !store.isFavorites(p.id) {
+                                Button("Delete", systemImage: "trash", role: .destructive) { store.delete(p.id) }
+                            }
                         }
                 }
             }
@@ -109,12 +113,16 @@ struct PlaylistsView: View {
 private struct PlaylistRow: View {
     let playlist: Playlist
     let videos: [VideoItem]
+    var isFavorites = false
 
     var body: some View {
         HStack(spacing: 12) {
             Group {
                 if let first = videos.first { ThumbnailView(item: first, showsBadges: false) }
-                else { Color(white: 0.15).aspectRatio(16 / 9, contentMode: .fit).overlay(Image(systemName: "music.note.list").foregroundStyle(.secondary)) }
+                else {
+                    Color(white: 0.15).aspectRatio(16 / 9, contentMode: .fit)
+                        .overlay(Image(systemName: isFavorites ? "heart.fill" : "music.note.list").foregroundStyle(isFavorites ? Color.red : Color.secondary))
+                }
             }
             .frame(width: 104)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -125,7 +133,10 @@ private struct PlaylistRow: View {
                     .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 8, topTrailingRadius: 8))
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(playlist.name).font(.body.weight(.medium)).lineLimit(1)
+                HStack(spacing: 5) {
+                    if isFavorites { Image(systemName: "heart.fill").font(.caption).foregroundStyle(.red) }
+                    Text(playlist.name).font(.body.weight(.medium)).lineLimit(1)
+                }
                 Text(sourceSummary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
@@ -151,7 +162,7 @@ struct PlaylistDetailView: View {
     enum Tab: String, CaseIterable { case videos = "Videos", sources = "Sources" }
     @State private var tab: Tab = .videos
     @State private var pendingAdd: PendingPlaylistAdd?
-    @State private var addingFolders = false
+    @State private var addingVideos = false
     @State private var query = ""
 
     private var playlist: Playlist? { store.playlist(playlistID) }
@@ -182,7 +193,7 @@ struct PlaylistDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Add folders…", systemImage: "folder.badge.plus") { addingFolders = true }
+                    Button("Add videos…", systemImage: "plus.rectangle.on.rectangle") { addingVideos = true }
                     if tab == .videos {
                         Picker("Layout", selection: $layoutRaw) {
                             ForEach(GalleryLayout.allCases) { Label($0.label, systemImage: $0.symbol).tag($0.rawValue) }
@@ -192,9 +203,7 @@ struct PlaylistDetailView: View {
             }
         }
         .sheet(item: $pendingAdd) { AddToPlaylistSheet(pending: $0) }
-        .sheet(isPresented: $addingFolders) {
-            FolderPickerSheet { entries in store.add(entries, to: playlistID) }
-        }
+        .sheet(isPresented: $addingVideos) { VideoPickerSheet(playlistID: playlistID) }
     }
 
     private func videosTab(_ p: Playlist) -> some View {
@@ -218,13 +227,20 @@ struct PlaylistDetailView: View {
                              onAddToPlaylist: { pendingAdd = PendingPlaylistAdd(entries: $0) })
 
                 if videos.isEmpty && query.isEmpty {
-                    ContentUnavailableView("Empty playlist", systemImage: "music.note.list",
-                                           description: Text("Add folders from ••• or long-press videos in your Library."))
+                    ContentUnavailableView {
+                        Label("Empty playlist", systemImage: "music.note.list")
+                    } description: {
+                        Text("Pick videos from your library to add here.")
+                    } actions: {
+                        Button("Add videos…") { addingVideos = true }.buttonStyle(.borderedProminent)
+                    }
                 }
             }
             .padding(.vertical, 8)
         }
-        .searchable(text: $query, prompt: "Search this playlist")
+        .scrollDismissesKeyboard(.immediately)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search this playlist")
     }
 
     private func sourcesTab(_ p: Playlist) -> some View {
@@ -236,10 +252,10 @@ struct PlaylistDetailView: View {
                 .onDelete { idx in store.remove(entryIDs: Set(idx.map { p.entries[$0].id }), from: p.id) }
                 .onMove { store.move(in: p.id, from: $0, to: $1) }
             } footer: {
-                Text("Folders are live references — anything uploaded into them later is included. Duplicates across sources are played once. Drag to change play order.")
+                Text("Drag to change play order, or delete to remove. Videos are never added twice.")
             }
             Section {
-                Button { addingFolders = true } label: { Label("Add folders…", systemImage: "folder.badge.plus") }
+                Button { addingVideos = true } label: { Label("Add videos…", systemImage: "plus.rectangle.on.rectangle") }
             }
         }
         .environment(\.editMode, .constant(.active))
@@ -278,82 +294,123 @@ private struct SourceRow: View {
     }
 }
 
-/// Browse the bucket's folder tree and tick folders to add as live sources.
-struct FolderPickerSheet: View {
-    let onAdd: ([PlaylistEntry]) -> Void
+/// Browse the bucket's folders and tick individual videos to add to a playlist. Videos already in
+/// the playlist show as added and can't be picked again.
+struct VideoPickerSheet: View {
+    let playlistID: UUID
     @Environment(\.dismiss) private var dismiss
     @Environment(LibraryStore.self) private var library
-    @State private var picked: [String: Bool] = [:]   // prefix → recursive
-    @State private var recursive = true
+    @Environment(PlaylistStore.self) private var store
+    @State private var picked: Set<String> = []   // VideoItem.id
+
+    private var existing: Set<String> {
+        guard let p = store.playlist(playlistID) else { return [] }
+        return Set(library.resolve(p).map(\.id))
+    }
 
     var body: some View {
+        let alreadyIn = self.existing
         NavigationStack {
-            FolderPickerLevel(prefix: library.rootPrefix, picked: $picked, recursive: recursive)
+            VideoPickerLevel(prefix: library.rootPrefix, picked: $picked, existing: alreadyIn)
                 .navigationDestination(for: FolderRoute.self) {
-                    FolderPickerLevel(prefix: $0.prefix, picked: $picked, recursive: recursive)
+                    VideoPickerLevel(prefix: $0.prefix, picked: $picked, existing: alreadyIn)
                 }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Add \(picked.count)") {
-                            onAdd(picked.sorted { $0.key < $1.key }.map { .folder(bucket: library.activeBucket, prefix: $0.key, recursive: $0.value) })
+                            let entries = library.allVideos.filter { picked.contains($0.id) }
+                                .map { PlaylistEntry.video(bucket: $0.bucket, key: $0.key) }
+                            store.add(store.newEntries(entries, for: playlistID), to: playlistID)
                             dismiss()
                         }
+                        .bold()
                         .disabled(picked.isEmpty)
-                    }
-                    ToolbarItem(placement: .bottomBar) {
-                        Toggle("Include subfolders", isOn: $recursive).toggleStyle(.button)
                     }
                 }
         }
     }
 }
 
-private struct FolderPickerLevel: View {
+private struct VideoPickerLevel: View {
     let prefix: String
-    @Binding var picked: [String: Bool]
-    let recursive: Bool
+    @Binding var picked: Set<String>
+    let existing: Set<String>
     @Environment(LibraryStore.self) private var library
+    @State private var query = ""
+
+    private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         let contents = library.contents(of: prefix)
-        let isRoot = prefix == library.rootPrefix
+        let videos = isSearching ? library.search(query, in: prefix) : SortOrder.nameAsc.apply(contents.videos)
+        let pickable = videos.filter { !existing.contains($0.id) }
+        let allPicked = !pickable.isEmpty && pickable.allSatisfy { picked.contains($0.id) }
         List {
-            if !isRoot || !contents.videos.isEmpty {
-                pickRow(prefix: prefix, name: isRoot ? "Videos at the top level" : "This folder",
-                        count: library.videos(under: prefix, recursive: recursive).count, navigable: false)
+            if !isSearching && !contents.subfolders.isEmpty {
+                Section("Folders") {
+                    ForEach(contents.subfolders) { f in
+                        NavigationLink(value: FolderRoute(prefix: f.prefix)) {
+                            HStack {
+                                Image(systemName: "folder.fill").foregroundStyle(.yellow)
+                                Text(f.name).lineLimit(1)
+                                Spacer()
+                                let n = library.videos(under: f.prefix, recursive: true).filter { picked.contains($0.id) }.count
+                                if n > 0 { Text("\(n) picked").font(.caption).foregroundStyle(.red) }
+                                Text("\(f.videoCount)").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
-            ForEach(contents.subfolders) { f in
-                pickRow(prefix: f.prefix, name: f.name, count: f.videoCount, navigable: true)
+            if !videos.isEmpty {
+                Section {
+                    ForEach(videos) { row($0) }
+                } header: {
+                    HStack {
+                        Text(isSearching ? "\(videos.count) results" : "Videos in this folder")
+                        Spacer()
+                        if !pickable.isEmpty {
+                            Button(allPicked ? "Deselect all" : "Select all") {
+                                let ids = Set(pickable.map(\.id))
+                                picked = allPicked ? picked.subtracting(ids) : picked.union(ids)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .textCase(nil)
+                        }
+                    }
+                }
+            } else if isSearching || contents.subfolders.isEmpty {
+                ContentUnavailableView(isSearching ? "No matches" : "No videos here", systemImage: "film.stack")
             }
         }
-        .navigationTitle(isRoot ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? ""))
+        .scrollDismissesKeyboard(.immediately)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search this folder")
+        .navigationTitle(prefix == library.rootPrefix ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? ""))
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func pickRow(prefix p: String, name: String, count: Int, navigable: Bool) -> some View {
-        HStack {
-            Button {
-                if picked[p] != nil { picked[p] = nil } else { picked[p] = recursive }
-            } label: {
-                Image(systemName: picked[p] != nil ? "checkmark.circle.fill" : "circle")
-                    .font(.title3).foregroundStyle(picked[p] != nil ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+    private func row(_ v: VideoItem) -> some View {
+        let added = existing.contains(v.id)
+        let on = added || picked.contains(v.id)
+        return Button {
+            if picked.contains(v.id) { picked.remove(v.id) } else { picked.insert(v.id) }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(added ? Color.secondary : (on ? Color.red : Color.secondary))
+                ThumbnailView(item: v, showsBadges: false).frame(width: 80).clipShape(RoundedRectangle(cornerRadius: 6))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(v.title).font(.subheadline).lineLimit(2).foregroundStyle(Color.primary)
+                    Text(added ? "Already in playlist" : (isSearching ? v.folderDisplay : Format.bytes(v.size)))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            if navigable {
-                NavigationLink(value: FolderRoute(prefix: p)) { label(name, count) }
-            } else {
-                label(name, count)
-            }
+            .contentShape(Rectangle())
         }
-    }
-
-    private func label(_ name: String, _ count: Int) -> some View {
-        HStack {
-            Image(systemName: "folder.fill").foregroundStyle(.yellow)
-            Text(name).lineLimit(1)
-            Spacer()
-            Text("\(count)").foregroundStyle(.secondary).font(.caption)
-        }
+        .buttonStyle(.plain)
+        .disabled(added)
     }
 }

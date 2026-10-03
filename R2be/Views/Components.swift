@@ -31,6 +31,9 @@ struct ThumbnailView: View {
                     .padding(5)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if showsBadges { DownloadBadge(item: item).padding(5) }
+        }
         .overlay(alignment: .bottom) {
             if showsBadges, let p = ResumeStore.progress(for: item.id) {
                 GeometryReader { g in
@@ -48,6 +51,27 @@ struct ThumbnailView: View {
             let img = await ThumbnailService.shared.thumbnail(
                 for: item, videoURL: library.streamURL(for: item), sidecarURL: library.sidecarThumbnailURL(for: item))
             withAnimation(.easeOut(duration: 0.2)) { image = img }
+        }
+    }
+}
+
+/// Small corner badge: a ring while downloading, a filled arrow once saved for offline.
+struct DownloadBadge: View {
+    let item: VideoItem
+    private var store: DownloadStore { .shared }
+
+    var body: some View {
+        if store.isDownloaded(item) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.white, Color.black.opacity(0.6))
+        } else if let p = store.progress[item.id] {
+            Circle().trim(from: 0, to: max(p, 0.03))
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 14, height: 14)
+                .padding(2)
+                .background(.black.opacity(0.6), in: Circle())
         }
     }
 }
@@ -173,13 +197,31 @@ struct VideoCell: View {
 struct FolderCell: View {
     let folder: FolderInfo
     let layout: GalleryLayout
+    @Environment(LibraryStore.self) private var library
+    @Environment(FolderCoverStore.self) private var covers
+
+    private var customCover: UIImage? { covers.image(bucket: library.activeBucket, prefix: folder.prefix) }
+
+    /// A picked photo, cropped to the 16:9 tile.
+    private func coverImage(_ img: UIImage) -> some View {
+        Color.clear
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(Image(uiImage: img).resizable().scaledToFill())
+            .clipped()
+    }
 
     var body: some View {
         switch layout {
         case .list:
             HStack(spacing: 12) {
-                Image(systemName: "folder.fill").font(.title2).foregroundStyle(.yellow)
-                    .frame(width: 128, height: 40)
+                Group {
+                    if let img = customCover {
+                        coverImage(img).frame(width: 128).clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Image(systemName: "folder.fill").font(.title2).foregroundStyle(.yellow)
+                            .frame(width: 128, height: 40)
+                    }
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(folder.name).font(.subheadline.weight(.medium)).lineLimit(1)
                     Text("\(folder.videoCount) videos").font(.caption).foregroundStyle(.secondary)
@@ -195,7 +237,8 @@ struct FolderCell: View {
                     // Stacked-cards look so folders read differently from videos at a glance.
                     RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.22)).padding(.horizontal, 10).offset(y: -6)
                     Group {
-                        if let cover = folder.cover { ThumbnailView(item: cover, showsBadges: false) }
+                        if let img = customCover { coverImage(img) }
+                        else if let cover = folder.cover { ThumbnailView(item: cover, showsBadges: false) }
                         else { Color(white: 0.15).aspectRatio(16 / 9, contentMode: .fit) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: layout == .cards ? 14 : 8))
@@ -225,6 +268,7 @@ struct VideoMenu: View {
     let onAddToPlaylist: ([PlaylistEntry]) -> Void
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @AppStorage("disableShare") private var disableShare = true
 
     var body: some View {
         Button { onPlay() } label: { Label("Play", systemImage: "play.fill") }
@@ -233,9 +277,11 @@ struct VideoMenu: View {
         Button { onAddToPlaylist([.video(bucket: item.bucket, key: item.key)]) } label: {
             Label("Add to Playlist…", systemImage: "music.note.list")
         }
+        RecentPlaylistButton(entries: [.video(bucket: item.bucket, key: item.key)])
+        DownloadMenuItems(items: [item])
         Divider()
         Button { UIPasteboard.general.string = item.fileName } label: { Label("Copy File Name", systemImage: "doc.on.doc") }
-        if let url = library.shareURL(for: item) {
+        if !disableShare, let url = library.shareURL(for: item) {
             ShareLink(item: url) { Label("Share 24h Link", systemImage: "square.and.arrow.up") }
         }
     }
@@ -246,6 +292,7 @@ struct FolderMenu: View {
     let onAddToPlaylist: ([PlaylistEntry]) -> Void
     @Environment(PlayerController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @Environment(FolderCoverStore.self) private var covers
 
     var body: some View {
         Button {
@@ -255,16 +302,45 @@ struct FolderMenu: View {
             player.shufflePlay(library.videos(under: folder.prefix, recursive: true), title: folder.name)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
+        let entries = library.videos(under: folder.prefix, recursive: true).map { PlaylistEntry.video(bucket: $0.bucket, key: $0.key) }
         Button {
-            onAddToPlaylist([.folder(bucket: library.activeBucket, prefix: folder.prefix, recursive: true)])
-        } label: { Label("Add Folder + Subfolders to Playlist…", systemImage: "folder.badge.plus") }
+            onAddToPlaylist(entries)
+        } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
+        RecentPlaylistButton(entries: entries)
+        DownloadMenuItems(items: library.videos(under: folder.prefix, recursive: true))
+        Divider()
         Button {
-            onAddToPlaylist([.folder(bucket: library.activeBucket, prefix: folder.prefix, recursive: false)])
-        } label: { Label("Add This Folder Only to Playlist…", systemImage: "folder") }
+            covers.requestPicker(bucket: library.activeBucket, prefix: folder.prefix)
+        } label: { Label("Set Cover Image…", systemImage: "photo") }
+        if covers.hasCover(bucket: library.activeBucket, prefix: folder.prefix) {
+            Button(role: .destructive) {
+                covers.removeCover(bucket: library.activeBucket, prefix: folder.prefix)
+            } label: { Label("Remove Cover Image", systemImage: "trash") }
+        }
     }
 }
 
 // MARK: - Add to playlist
+
+/// Menu item shown right under "Add to Playlist…": one tap adds to the playlist used last.
+struct RecentPlaylistButton: View {
+    let entries: [PlaylistEntry]
+    @Environment(PlaylistStore.self) private var store
+
+    var body: some View {
+        if let p = store.recentPlaylist {
+            let fresh = store.newEntries(entries, for: p.id)
+            Button {
+                store.add(fresh, to: p.id)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } label: {
+                Label(fresh.isEmpty ? "Already in \(p.name)" : "Add to \(p.name)",
+                      systemImage: store.isFavorites(p.id) ? "heart" : "music.note")
+            }
+            .disabled(fresh.isEmpty)
+        }
+    }
+}
 
 struct PendingPlaylistAdd: Identifiable {
     let id = UUID()
@@ -299,20 +375,27 @@ struct AddToPlaylistSheet: View {
                     Text("Playlists live in the app only. Nothing in your bucket is moved or changed.")
                 }
                 if !store.playlists.isEmpty {
-                    Section("Add to existing") {
+                    Section {
                         ForEach(store.playlists) { p in
+                            let fresh = store.newEntries(pending.entries, for: p.id)
                             Button {
-                                store.add(pending.entries, to: p.id)
+                                store.add(fresh, to: p.id)
                                 dismiss()
                             } label: {
                                 HStack {
-                                    Image(systemName: "music.note.list").foregroundStyle(.red)
-                                    Text(p.name).foregroundStyle(.primary)
+                                    Image(systemName: store.isFavorites(p.id) ? "heart.fill" : "music.note.list").foregroundStyle(.red)
+                                    Text(p.name).foregroundStyle(fresh.isEmpty ? Color.secondary : Color.primary)
                                     Spacer()
-                                    Text("\(p.entries.count) items").font(.caption).foregroundStyle(.secondary)
+                                    Text(addLabel(fresh: fresh.count, total: pending.entries.count))
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
+                            .disabled(fresh.isEmpty)
                         }
+                    } header: {
+                        Text("Add to existing")
+                    } footer: {
+                        Text("Videos already in a playlist are skipped, so nothing is added twice.")
                     }
                 }
             }
@@ -321,6 +404,12 @@ struct AddToPlaylistSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func addLabel(fresh: Int, total: Int) -> String {
+        if fresh == 0 { return total == 1 ? "Already added" : "All already added" }
+        if fresh == total { return "+\(fresh)" }
+        return "+\(fresh) new · \(total - fresh) already added"
     }
 
     private func createNew() {
@@ -336,17 +425,27 @@ struct AddToPlaylistSheet: View {
 final class PlayerLayerView: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    /// When set, this surface offers itself as the Picture in Picture source while it's on screen.
+    weak var pip: PiPManager?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let pip else { return }
+        if window != nil { pip.register(playerLayer) } else { pip.unregister(playerLayer) }
+    }
 }
 
 struct VideoSurface: UIViewRepresentable {
     let player: AVPlayer
     var gravity: AVLayerVideoGravity = .resizeAspect
+    var pip: PiPManager? = nil
 
     func makeUIView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView()
         v.backgroundColor = .black
         v.playerLayer.player = player
         v.playerLayer.videoGravity = gravity
+        v.pip = pip
         return v
     }
 
@@ -410,6 +509,7 @@ struct PillButton: View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(prominent ? Color.white : Color(white: 0.18), in: Capsule())

@@ -1,0 +1,118 @@
+name: TestFlight
+
+# Builds, signs and uploads R2be to App Store Connect, so it shows up in the TestFlight app on your
+# iPhone. Signing is done by Apple's cloud-managed certificates through an App Store Connect API key,
+# so no Mac, .p12 or provisioning profile is needed. Setup steps are in the README (section 4).
+#
+# Repository secrets:
+#   APPLE_TEAM_ID      10-character Team ID (developer.apple.com → Account → Membership details)
+#   APP_BUNDLE_ID      bundle ID registered for the app, e.g. com.yourname.r2be
+#   ASC_KEY_ID         App Store Connect API key ID
+#   ASC_ISSUER_ID      App Store Connect API issuer ID
+#   ASC_KEY_P8         full text of the AuthKey_XXXXXXXXXX.p8 file (Admin role)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_BUNDLE_ID: ${{ secrets.APP_BUNDLE_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        run: |
+          missing=""
+          for s in APPLE_TEAM_ID APP_BUNDLE_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            [ -n "${!s}" ] || missing="$missing $s"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      # App Store Connect only accepts builds made with a release (non-beta) Xcode 26 / iOS 26 SDK.
+      - name: Select Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)"
+          [ -n "$xcode" ] || { echo "::error::No release Xcode 26 on this runner"; ls -d /Applications/Xcode*.app; exit 1; }
+          echo "Using $xcode"
+          sudo xcode-select -s "$xcode"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Write API key
+        run: |
+          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key"
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project R2be.xcodeproj \
+            -scheme R2be \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/R2be.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$APP_BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            > xcodebuild.log 2>&1 && status=0 || status=$?
+          grep -E "error:|warning: .*R2be|ARCHIVE (SUCCEEDED|FAILED)" xcodebuild.log || true
+          [ "$status" -eq 0 ] || exit "$status"
+
+      - name: Sign and upload to App Store Connect
+        run: |
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/R2be.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee -a xcodebuild.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Remove API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: testflight-log
+          path: xcodebuild.log
