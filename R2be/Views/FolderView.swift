@@ -20,7 +20,7 @@ struct FolderView: View {
 
     private var layout: GalleryLayout { GalleryLayout(rawValue: layoutRaw) ?? .grid }
     private var sort: SortOrder { SortOrder(rawValue: sortRaw) ?? .nameAsc }
-    private var isRoot: Bool { prefix.isEmpty }
+    private var isRoot: Bool { prefix == library.rootPrefix }
     private var title: String {
         isRoot ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? "")
     }

@@ -12,6 +12,7 @@ struct SetupView: View {
     @State private var accessKeyId = ""
     @State private var secret = ""
     @State private var bucket = ""
+    @State private var folder = ""
     @State private var jurisdiction: R2Credentials.Jurisdiction = .standard
     @State private var buckets: [String] = []
     @State private var testing = false
@@ -19,11 +20,16 @@ struct SetupView: View {
     @State private var ok = false
 
     private var draft: R2Credentials {
-        R2Credentials(accountId: accountId.trimmingCharacters(in: .whitespacesAndNewlines),
-                      accessKeyId: accessKeyId.trimmingCharacters(in: .whitespacesAndNewlines),
-                      secretAccessKey: secret.trimmingCharacters(in: .whitespacesAndNewlines),
-                      bucket: bucket.trimmingCharacters(in: .whitespacesAndNewlines),
-                      jurisdiction: jurisdiction)
+
+        // Bucket names can't hold "/", so "bucket/some/folder" splits into bucket + folder.
+        let path = bucket.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "/", maxSplits: 1)
+        let typedFolder = path.count > 1 ? String(path[1]) : ""
+        return R2Credentials(accountId: accountId.trimmingCharacters(in: .whitespacesAndNewlines),
+                             accessKeyId: accessKeyId.trimmingCharacters(in: .whitespacesAndNewlines),
+                             secretAccessKey: secret.trimmingCharacters(in: .whitespacesAndNewlines),
+                             bucket: path.first.map(String.init) ?? "",
+                             jurisdiction: jurisdiction,
+                             folder: folder.isEmpty ? typedFolder : folder)
     }
 
     var body: some View {
@@ -58,8 +64,9 @@ struct SetupView: View {
                         ForEach(buckets, id: \.self) { Text($0).tag($0) }
                     }
                 }
+                TextField("Folder (optional), e.g. dfvl/clips", text: $folder)
             } header: { Text("Bucket") } footer: {
-                Text("Leave empty and tap Test to list buckets (needs an account-wide token).")
+                Text("Leave the bucket empty and tap Test to list buckets (needs an account-wide token). Set a folder to index only that part of the bucket, which skips everything else when refreshing.")
             }
             Section {
                 Button {
@@ -92,7 +99,7 @@ struct SetupView: View {
         .onAppear {
             if let c = editing {
                 accountId = c.accountId; accessKeyId = c.accessKeyId; secret = c.secretAccessKey
-                bucket = c.bucket; jurisdiction = c.jurisdiction
+                bucket = c.bucket; jurisdiction = c.jurisdiction; folder = c.folder ?? ""
             } else if let c = library.credentials {
                 // A new bucket usually lives in the same account; its token may differ.
                 accountId = c.accountId; jurisdiction = c.jurisdiction
@@ -111,9 +118,9 @@ struct SetupView: View {
                 status = buckets.isEmpty ? "Connected, but no buckets visible." : "Found \(buckets.count) bucket(s). Pick one."
                 if let first = buckets.first { bucket = first }
             } else {
-                let page = try await client.listObjects(bucket: draft.bucket, maxKeys: 5)
+                let page = try await client.listObjects(bucket: draft.bucket, prefix: draft.rootPrefix, maxKeys: 5)
                 ok = true
-                status = "Connected to \(draft.bucket)" + (page.objects.isEmpty ? " (empty)" : "")
+                status = "Connected to \(draft.bucket)/\(draft.rootPrefix)" + (page.objects.isEmpty ? " (empty)" : "")
             }
         } catch {
             ok = false
@@ -140,7 +147,7 @@ struct SettingsView: View {
                     Button { library.select(bucket: c.bucket) } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(c.bucket).foregroundStyle(.primary)
+                                Text(c.bucket + (c.rootPrefix.isEmpty ? "" : "/" + c.rootPrefix)).foregroundStyle(.primary)
                                 Text("Account \(c.accountId.prefix(8))…").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()

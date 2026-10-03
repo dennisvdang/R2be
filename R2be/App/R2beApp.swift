@@ -43,16 +43,16 @@ struct RootView: View {
             if library.isConfigured {
                 TabView(selection: $tab) {
                     NavigationStack {
-                        FolderView(prefix: "")
+                        FolderView(prefix: library.rootPrefix)
                             .navigationDestination(for: FolderRoute.self) { FolderView(prefix: $0.prefix) }
                     }
-                        .id(library.activeBucket)
+                        .id(library.activeBucket + "/" + library.rootPrefix)
                         .miniPlayerInset()
                         .tabItem { Label("Library", systemImage: "play.rectangle.on.rectangle") }
                         .tag(AppTab.library)
 
                     FeedView(isActiveTab: tab == .feed)
-                        .id(library.activeBucket)
+                        .id(library.activeBucket + "/" + library.rootPrefix)
                         .tabItem { Label("Feed", systemImage: "rectangle.stack.badge.play") }
                         .tag(AppTab.feed)
 

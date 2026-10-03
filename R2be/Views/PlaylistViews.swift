@@ -288,7 +288,7 @@ struct FolderPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            FolderPickerLevel(prefix: "", picked: $picked, recursive: recursive)
+            FolderPickerLevel(prefix: library.rootPrefix, picked: $picked, recursive: recursive)
                 .navigationDestination(for: FolderRoute.self) {
                     FolderPickerLevel(prefix: $0.prefix, picked: $picked, recursive: recursive)
                 }
@@ -317,16 +317,17 @@ private struct FolderPickerLevel: View {
 
     var body: some View {
         let contents = library.contents(of: prefix)
+        let isRoot = prefix == library.rootPrefix
         List {
-            if !prefix.isEmpty || !contents.videos.isEmpty {
-                pickRow(prefix: prefix, name: prefix.isEmpty ? "Videos in bucket root" : "This folder",
+            if !isRoot || !contents.videos.isEmpty {
+                pickRow(prefix: prefix, name: isRoot ? "Videos at the top level" : "This folder",
                         count: library.videos(under: prefix, recursive: recursive).count, navigable: false)
             }
             ForEach(contents.subfolders) { f in
                 pickRow(prefix: f.prefix, name: f.name, count: f.videoCount, navigable: true)
             }
         }
-        .navigationTitle(prefix.isEmpty ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? ""))
+        .navigationTitle(isRoot ? library.activeBucket : String(prefix.dropLast().split(separator: "/").last ?? ""))
         .navigationBarTitleDisplayMode(.inline)
     }
 

@@ -100,7 +100,7 @@ struct FeedView: View {
                         }
                     }
                 }
-                let folders = library.contents(of: "").subfolders
+                let folders = library.contents(of: library.rootPrefix).subfolders
                 if !folders.isEmpty {
                     Section("Folders") {
                         ForEach(folders) { f in

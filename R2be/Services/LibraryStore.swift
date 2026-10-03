@@ -51,6 +51,9 @@ final class LibraryStore {
 
     var credentials: R2Credentials? { connections.first { $0.bucket == activeBucket } }
     var isConfigured: Bool { credentials != nil }
+
+    /// The folder the active bucket is limited to; the Library opens here.
+    var rootPrefix: String { credentials?.rootPrefix ?? "" }
     var activeIndex: BucketIndex? { indexes[activeBucket] }
     var allVideos: [VideoItem] { activeIndex?.videos ?? [] }
 
@@ -107,12 +110,13 @@ final class LibraryStore {
         guard let client = client(for: activeBucket) else { return }
         refreshTask?.cancel()
         let bucket = activeBucket
+        let prefix = rootPrefix
         isIndexing = true
         indexProgress = 0
         lastError = nil
         refreshTask = Task {
             do {
-                let objects = try await client.listAllObjects(bucket: bucket) { n in
+                let objects = try await client.listAllObjects(bucket: bucket, prefix: prefix) { n in
                     Task { @MainActor [weak self] in self?.indexProgress = n }
                 }
                 let index = Self.buildIndex(bucket: bucket, objects: objects)
