@@ -15,7 +15,6 @@ struct VideoItem: Identifiable, Hashable, Codable, Sendable {
         guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return name }
         return String(name[..<dot])
     }
-    var fileExtension: String { (fileName as NSString).pathExtension.lowercased() }
     /// Folder prefix including trailing slash ("" for bucket root).
     var folder: String {
         guard let slash = key.lastIndex(of: "/") else { return "" }
@@ -27,7 +26,6 @@ struct VideoItem: Identifiable, Hashable, Codable, Sendable {
 enum MediaTypes {
     /// Containers AVPlayer can stream natively. MKV/AVI/WebM need transcoding to MP4 first.
     static let playable: Set<String> = ["mp4", "m4v", "mov", "m3u8", "3gp", "mp3", "m4a"]
-    static let unplayableVideo: Set<String> = ["mkv", "avi", "webm", "wmv", "flv"]
     static let images: Set<String> = ["jpg", "jpeg", "png", "webp"]
 }
 

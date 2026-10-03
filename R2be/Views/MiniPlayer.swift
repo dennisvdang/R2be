@@ -50,18 +50,17 @@ struct MiniPlayerBar: View {
 
 extension View {
     /// Pins the mini player above the tab bar while something is playing and the full player is closed.
-    func miniPlayerInset(hidden: Bool) -> some View {
-        modifier(MiniPlayerInset(hidden: hidden))
+    func miniPlayerInset() -> some View {
+        modifier(MiniPlayerInset())
     }
 }
 
 private struct MiniPlayerInset: ViewModifier {
-    let hidden: Bool
     @Environment(PlayerController.self) private var player
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
-            if !hidden, !player.isPresented, player.current != nil {
+            if !player.isPresented, player.current != nil {
                 MiniPlayerBar().transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }

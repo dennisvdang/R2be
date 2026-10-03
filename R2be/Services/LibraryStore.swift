@@ -28,7 +28,8 @@ struct BucketIndex: Codable {
 @Observable
 @MainActor
 final class LibraryStore {
-    private(set) var credentials: R2Credentials?
+    private(set) var connections: [R2Credentials]
+    private(set) var activeBucket: String
     private(set) var indexes: [String: BucketIndex] = [:]
     var isIndexing = false
     var indexProgress = 0
@@ -38,30 +39,64 @@ final class LibraryStore {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
+    private static let activeBucketKey = "activeBucket"
+
     init() {
-        credentials = KeychainStore.load()
-        if let b = credentials?.bucket, !b.isEmpty { indexes[b] = Self.loadIndex(bucket: b) }
+        let saved = KeychainStore.load()
+        let last = UserDefaults.standard.string(forKey: Self.activeBucketKey)
+        connections = saved
+        activeBucket = saved.first { $0.bucket == last }?.bucket ?? saved.first?.bucket ?? ""
+        if !activeBucket.isEmpty { indexes[activeBucket] = Self.loadIndex(bucket: activeBucket) }
     }
 
-    var isConfigured: Bool { credentials != nil && !(credentials?.bucket.isEmpty ?? true) }
-    var client: R2Client? { credentials.map { R2Client(credentials: $0) } }
-    var activeBucket: String { credentials?.bucket ?? "" }
+    var credentials: R2Credentials? { connections.first { $0.bucket == activeBucket } }
+    var isConfigured: Bool { credentials != nil }
     var activeIndex: BucketIndex? { indexes[activeBucket] }
     var allVideos: [VideoItem] { activeIndex?.videos ?? [] }
 
-    // MARK: Credentials
+    /// Each bucket signs with its own token, so playlists can mix buckets.
+    func client(for bucket: String) -> R2Client? {
+        connections.first { $0.bucket == bucket }.map { R2Client(credentials: $0) }
+    }
 
-    func save(credentials new: R2Credentials) {
-        KeychainStore.save(new)
-        credentials = new
+    // MARK: Connections
+
+    /// Adds a connection, or replaces the one saved under `replacing`, and makes it active.
+    func save(credentials new: R2Credentials, replacing old: String? = nil) {
+        connections.removeAll { $0.bucket == new.bucket || $0.bucket == old }
+        connections.append(new)
+        KeychainStore.save(connections)
+        select(bucket: new.bucket, forceRefresh: true)
+    }
+
+    func select(bucket: String, forceRefresh: Bool = false) {
+        guard connections.contains(where: { $0.bucket == bucket }) else { return }
+        activeBucket = bucket
+        UserDefaults.standard.set(bucket, forKey: Self.activeBucketKey)
         folderCache = [:]
-        if indexes[new.bucket] == nil { indexes[new.bucket] = Self.loadIndex(bucket: new.bucket) }
-        refresh()
+        lastError = nil
+        if indexes[bucket] == nil { indexes[bucket] = Self.loadIndex(bucket: bucket) }
+        if forceRefresh || isIndexing { refresh() } else { refreshIfStale() }
+    }
+
+    func remove(bucket: String) {
+        connections.removeAll { $0.bucket == bucket }
+        KeychainStore.save(connections)
+        indexes[bucket] = nil
+        if activeBucket == bucket {
+            refreshTask?.cancel()
+            isIndexing = false
+            activeBucket = ""
+            if let next = connections.first { select(bucket: next.bucket) }
+        }
     }
 
     func signOut() {
+        refreshTask?.cancel()
+        isIndexing = false
         KeychainStore.delete()
-        credentials = nil
+        connections = []
+        activeBucket = ""
         indexes = [:]
         folderCache = [:]
     }
@@ -69,7 +104,7 @@ final class LibraryStore {
     // MARK: Indexing
 
     func refresh() {
-        guard let client, isConfigured else { return }
+        guard let client = client(for: activeBucket) else { return }
         refreshTask?.cancel()
         let bucket = activeBucket
         isIndexing = true
@@ -84,11 +119,12 @@ final class LibraryStore {
                 self.indexes[bucket] = index
                 self.folderCache = [:]
                 Self.saveIndex(index)
-            } catch is CancellationError {
             } catch {
-                self.lastError = error.localizedDescription
+                if !Task.isCancelled { self.lastError = error.localizedDescription }
             }
-            self.isIndexing = false
+
+            // A newer refresh (e.g. after switching buckets) owns the indexing state now.
+            if !Task.isCancelled { self.isIndexing = false }
         }
     }
 
@@ -193,7 +229,12 @@ final class LibraryStore {
 
     func streamURL(for item: VideoItem) -> URL? {
         let hours = UserDefaults.standard.double(forKey: "presignHours")
-        return client?.presignedURL(bucket: item.bucket, key: item.key, expires: (hours > 0 ? hours : 6) * 3600)
+        return client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: (hours > 0 ? hours : 6) * 3600)
+    }
+
+    /// 24-hour link for the share sheet.
+    func shareURL(for item: VideoItem) -> URL? {
+        client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600)
     }
 
     /// Optional sidecar thumbnail: "clip.jpg" or "clip.mp4.jpg" next to "clip.mp4", or a
@@ -209,7 +250,7 @@ final class LibraryStore {
             candidates.append(thumbsBase + "." + ext)
         }
         guard let hit = candidates.first(where: images.contains) else { return nil }
-        return client?.presignedURL(bucket: item.bucket, key: hit, expires: 24 * 3600)
+        return client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: hit, expires: 24 * 3600)
     }
 
     // MARK: Persistence

@@ -1,28 +1,22 @@
-import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-#if canImport(CryptoKit)
 import CryptoKit
-#else
-import Crypto
-#endif
+import Foundation
 
 /// Minimal AWS Signature V4 implementation for Cloudflare R2's S3-compatible API.
 /// R2 uses region "auto" and service "s3".
 struct SigV4Signer: Sendable {
     let accessKeyId: String
     let secretAccessKey: String
-    var region: String = "auto"
-    var service: String = "s3"
+    let region = "auto"
+    let service = "s3"
 
     static let emptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
     // MARK: - Header-signed request (used for list calls)
 
-    func sign(_ request: inout URLRequest, payloadHash: String = SigV4Signer.emptyPayloadHash, date: Date = Date()) {
+    func sign(_ request: inout URLRequest) {
         guard let url = request.url, let host = url.host else { return }
-        let (amzDate, dateStamp) = Self.timestamps(date)
+        let (amzDate, dateStamp) = Self.timestamps(Date())
+        let payloadHash = Self.emptyPayloadHash
         let method = request.httpMethod ?? "GET"
         let hostHeader = url.port.map { "\(host):\($0)" } ?? host
 
@@ -55,9 +49,9 @@ struct SigV4Signer: Sendable {
     // MARK: - Presigned URL (used by AVPlayer / thumbnail generator)
 
     /// Returns a query-string-authenticated URL. `expires` is clamped to 1s...7 days (S3 maximum).
-    func presign(url: URL, method: String = "GET", expires: TimeInterval, date: Date = Date()) -> URL {
+    func presign(url: URL, expires: TimeInterval) -> URL {
         guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false), let host = url.host else { return url }
-        let (amzDate, dateStamp) = Self.timestamps(date)
+        let (amzDate, dateStamp) = Self.timestamps(Date())
         let scope = "\(dateStamp)/\(region)/\(service)/aws4_request"
         let expiresSeconds = Int(min(max(expires, 1), 604_800))
         let hostHeader = url.port.map { "\(host):\($0)" } ?? host
@@ -73,7 +67,7 @@ struct SigV4Signer: Sendable {
         let query = Self.canonicalQuery(items)
 
         let canonicalRequest = [
-            method,
+            "GET",
             Self.canonicalURI(url),
             query,
             "host:\(hostHeader)\n",
@@ -142,12 +136,10 @@ struct SigV4Signer: Sendable {
     }
 
     static func canonicalQuery(_ items: [URLQueryItem]) -> String {
-        let pairs: [(name: String, value: String)] = items.map { item in
-            (name: encode(item.name), value: encode(item.value ?? ""))
-        }
-        let sorted = pairs.sorted { a, b in a.name == b.name ? a.value < b.value : a.name < b.name }
-        let parts: [String] = sorted.map { p in p.name + "=" + p.value }
-        return parts.joined(separator: "&")
+        items.map { (encode($0.name), encode($0.value ?? "")) }
+            .sorted(by: <)
+            .map { $0.0 + "=" + $0.1 }
+            .joined(separator: "&")
     }
 }
 

@@ -278,7 +278,7 @@ private struct PlayerInfoPanel: View {
                             chip("Save", "text.badge.plus", on: false) {
                                 pendingAdd = PendingPlaylistAdd(entries: [.video(bucket: item.bucket, key: item.key)])
                             }
-                            if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+                            if let url = library.shareURL(for: item) {
                                 ShareLink(item: url) { chipLabel("Share", "square.and.arrow.up", on: false) }
                                     .buttonStyle(.plain)
                             }

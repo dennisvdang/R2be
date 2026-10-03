@@ -4,16 +4,6 @@ import Observation
 import SwiftUI // Array.remove(atOffsets:)
 import UIKit
 
-/// Where the current queue came from. The Feed tab only drives the player while context == .feed.
-enum PlaybackContext: Equatable {
-    case none
-    case folder(String)
-    case playlist(UUID)
-    case search
-    case feed
-    case selection
-}
-
 /// One shared AVPlayer for the whole app: the full-screen player, the mini player and the Feed
 /// all render the same instance, so audio never doubles up and position carries across screens.
 @Observable
@@ -25,7 +15,9 @@ final class PlayerController {
     /// Play order as indices into `queue`. Shuffle just permutes this; Up Next reads from it.
     private(set) var order: [Int] = []
     private(set) var position: Int = 0
-    private(set) var context: PlaybackContext = .none
+
+    /// True while the Feed tab owns the queue; the Feed only drives the player then.
+    private(set) var isFeedQueue = false
     private(set) var sourceTitle = ""
 
     var isPresented = false          // full-screen player sheet
@@ -85,16 +77,15 @@ final class PlayerController {
         return order[(position + 1)...].map { queue[$0] }
     }
     var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) }
-    var hasPrevious: Bool { position > 0 || currentTime > 5 }
 
     // MARK: - Starting playback
 
     /// Replace the queue and start playing. `start == nil` + shuffle starts at a random video.
     func play(_ items: [VideoItem], startAt start: VideoItem? = nil, shuffle shuffleOverride: Bool? = nil,
-              context: PlaybackContext, title: String, present: Bool = true, keepGivenOrder: Bool = false) {
+              title: String, isFeed: Bool = false, present: Bool = true, keepGivenOrder: Bool = false) {
         guard !items.isEmpty else { return }
         queue = items
-        self.context = context
+        isFeedQueue = isFeed
         sourceTitle = title
         if let shuffleOverride, shuffleOverride != shuffle {
             // Don't rebuild against the old order; buildOrder below handles it.
@@ -108,8 +99,8 @@ final class PlayerController {
     }
 
     /// Shuffle button on a folder/playlist: random first pick, shuffle stays on for what follows.
-    func shufflePlay(_ items: [VideoItem], context: PlaybackContext, title: String) {
-        play(items, startAt: nil, shuffle: true, context: context, title: title)
+    func shufflePlay(_ items: [VideoItem], title: String) {
+        play(items, startAt: nil, shuffle: true, title: title)
     }
 
     func jump(to item: VideoItem) {
@@ -121,7 +112,7 @@ final class PlayerController {
 
     /// Queue an item right after the current one (moving it if it's already queued).
     func playNext(_ item: VideoItem) {
-        guard !queue.isEmpty else { play([item], context: .selection, title: "Queue"); return }
+        guard !queue.isEmpty else { play([item], title: "Queue"); return }
         guard item != current else { return }
         let qi = queueIndex(for: item)
         if let existing = order.firstIndex(of: qi) {
@@ -132,7 +123,7 @@ final class PlayerController {
     }
 
     func addToQueue(_ items: [VideoItem]) {
-        guard !queue.isEmpty else { play(items, context: .selection, title: "Queue"); return }
+        guard !queue.isEmpty else { play(items, title: "Queue"); return }
         for i in items {
             let qi = queueIndex(for: i)
             if !order.contains(qi) { order.append(qi) }
@@ -214,7 +205,7 @@ final class PlayerController {
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []; order = []; position = 0
-        context = .none
+        isFeedQueue = false
         isPresented = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }

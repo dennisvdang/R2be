@@ -95,10 +95,10 @@ struct FolderView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 HStack(spacing: 10) {
                     PillButton(title: "Play all", systemImage: "play.fill", prominent: true) {
-                        player.play(allVideosHere, shuffle: false, context: .folder(prefix), title: title)
+                        player.play(allVideosHere, shuffle: false, title: title)
                     }
                     PillButton(title: "Shuffle", systemImage: "shuffle") {
-                        player.shufflePlay(allVideosHere, context: .folder(prefix), title: title)
+                        player.shufflePlay(allVideosHere, title: title)
                     }
                 }
             }
@@ -174,7 +174,7 @@ struct FolderView: View {
             }
             .frame(width: 50)
             PillButton(title: "Play \(selectedVideos.count)", systemImage: "play.fill", prominent: true) {
-                player.play(selectedVideos, context: .selection, title: "Selection")
+                player.play(selectedVideos, title: "Selection")
                 selection = nil
             }
             .disabled(selectedVideos.isEmpty)
@@ -189,7 +189,6 @@ struct FolderView: View {
     }
 
     private func play(_ item: VideoItem) {
-        player.play(visibleVideos, startAt: item, context: isSearching ? .search : .folder(prefix),
-                    title: isSearching ? "Search: \(query)" : title)
+        player.play(visibleVideos, startAt: item, title: isSearching ? "Search: \(query)" : title)
     }
 }

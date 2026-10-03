@@ -235,7 +235,7 @@ struct VideoMenu: View {
         }
         Divider()
         Button { UIPasteboard.general.string = item.fileName } label: { Label("Copy File Name", systemImage: "doc.on.doc") }
-        if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+        if let url = library.shareURL(for: item) {
             ShareLink(item: url) { Label("Share 24h Link", systemImage: "square.and.arrow.up") }
         }
     }
@@ -249,10 +249,10 @@ struct FolderMenu: View {
 
     var body: some View {
         Button {
-            player.play(library.videos(under: folder.prefix, recursive: true), context: .folder(folder.prefix), title: folder.name)
+            player.play(library.videos(under: folder.prefix, recursive: true), title: folder.name)
         } label: { Label("Play All", systemImage: "play.fill") }
         Button {
-            player.shufflePlay(library.videos(under: folder.prefix, recursive: true), context: .folder(folder.prefix), title: folder.name)
+            player.shufflePlay(library.videos(under: folder.prefix, recursive: true), title: folder.name)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
         Button {

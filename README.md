@@ -29,6 +29,8 @@ An iPhone app that turns a Cloudflare R2 bucket into a personal media server. Yo
 2. Set Permissions to **Object Read only**. Scope it to your video bucket, or to all buckets if you want the app to list them.
 3. Copy the **Access Key ID**, the **Secret Access Key** and your **Account ID**. The Account ID is in the endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
 
+You can save several buckets, each with its own token, under **Settings → Buckets → Add bucket**. Tap a bucket there to switch the library to it. Playlists can mix videos from any saved bucket.
+
 You don't need to set up CORS. The app talks to R2 directly over the S3 API with signed requests, not through a browser.
 
 ## 2. Build the app without a Mac (GitHub Actions)

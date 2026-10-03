@@ -46,14 +46,14 @@ struct PlaylistsView: View {
                             Button { renameText = p.name; renaming = p } label: { Label("Rename", systemImage: "pencil") }
                         }
                         .swipeActions(edge: .leading) {
-                            Button { player.shufflePlay(videos, context: .playlist(p.id), title: p.name) } label: {
+                            Button { player.shufflePlay(videos, title: p.name) } label: {
                                 Label("Shuffle", systemImage: "shuffle")
                             }
                             .tint(.red)
                         }
                         .contextMenu {
-                            Button("Play", systemImage: "play.fill") { player.play(videos, shuffle: false, context: .playlist(p.id), title: p.name) }
-                            Button("Shuffle", systemImage: "shuffle") { player.shufflePlay(videos, context: .playlist(p.id), title: p.name) }
+                            Button("Play", systemImage: "play.fill") { player.play(videos, shuffle: false, title: p.name) }
+                            Button("Shuffle", systemImage: "shuffle") { player.shufflePlay(videos, title: p.name) }
                             Button("Rename", systemImage: "pencil") { renameText = p.name; renaming = p }
                             Button("Duplicate", systemImage: "plus.square.on.square") { store.duplicate(p.id) }
                             Button("Delete", systemImage: "trash", role: .destructive) { store.delete(p.id) }
@@ -202,10 +202,10 @@ struct PlaylistDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     PillButton(title: "Play", systemImage: "play.fill", prominent: true) {
-                        player.play(videos, shuffle: false, context: .playlist(p.id), title: p.name)
+                        player.play(videos, shuffle: false, title: p.name)
                     }
                     PillButton(title: "Shuffle", systemImage: "shuffle") {
-                        player.shufflePlay(videos, context: .playlist(p.id), title: p.name)
+                        player.shufflePlay(videos, title: p.name)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -214,7 +214,7 @@ struct PlaylistDetailView: View {
                 VideoGallery(videos: videos,
                              layout: GalleryLayout(rawValue: layoutRaw) ?? .grid,
                              showFolderPath: true,
-                             onPlay: { v in player.play(videos, startAt: v, context: .playlist(p.id), title: p.name) },
+                             onPlay: { v in player.play(videos, startAt: v, title: p.name) },
                              onAddToPlaylist: { pendingAdd = PendingPlaylistAdd(entries: $0) })
 
                 if videos.isEmpty && query.isEmpty {

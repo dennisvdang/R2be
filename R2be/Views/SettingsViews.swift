@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SetupView: View {
     var isInitialSetup = false
+
+    /// The saved connection being edited; nil adds a new one.
+    var editing: R2Credentials? = nil
     @Environment(LibraryStore.self) private var library
     @Environment(\.dismiss) private var dismiss
 
@@ -76,7 +79,7 @@ struct SetupView: View {
             }
             Section {
                 Button("Save & open library") {
-                    library.save(credentials: draft)
+                    library.save(credentials: draft, replacing: editing?.bucket)
                     if !isInitialSetup { dismiss() }
                 }
                 .bold()
@@ -85,11 +88,14 @@ struct SetupView: View {
         }
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
-        .navigationTitle(isInitialSetup ? "Welcome" : "R2 Connection")
+        .navigationTitle(isInitialSetup ? "Welcome" : editing == nil ? "Add bucket" : "Edit connection")
         .onAppear {
-            if let c = library.credentials {
+            if let c = editing {
                 accountId = c.accountId; accessKeyId = c.accessKeyId; secret = c.secretAccessKey
                 bucket = c.bucket; jurisdiction = c.jurisdiction
+            } else if let c = library.credentials {
+                // A new bucket usually lives in the same account; its token may differ.
+                accountId = c.accountId; jurisdiction = c.jurisdiction
             }
         }
     }
@@ -107,7 +113,7 @@ struct SetupView: View {
             } else {
                 let page = try await client.listObjects(bucket: draft.bucket, maxKeys: 5)
                 ok = true
-                status = "Connected to \(draft.bucket)" + (page.objects.isEmpty && page.commonPrefixes.isEmpty ? " (empty)" : "")
+                status = "Connected to \(draft.bucket)" + (page.objects.isEmpty ? " (empty)" : "")
             }
         } catch {
             ok = false
@@ -123,14 +129,32 @@ struct SettingsView: View {
     @AppStorage("presignHours") private var presignHours = 6.0
     @State private var confirmSignOut = false
     @State private var cleared = false
+    @State private var editing: R2Credentials?
+    @State private var pendingRemove: String?
 
     var body: some View {
         @Bindable var player = player
         Form {
-            Section("Connection") {
-                LabeledContent("Bucket", value: library.activeBucket)
-                LabeledContent("Account", value: String((library.credentials?.accountId ?? "").prefix(8)) + "…")
-                NavigationLink("Edit connection / switch bucket") { SetupView() }
+            Section {
+                ForEach(library.connections, id: \.bucket) { c in
+                    Button { library.select(bucket: c.bucket) } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.bucket).foregroundStyle(.primary)
+                                Text("Account \(c.accountId.prefix(8))…").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if c.bucket == library.activeBucket { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                        }
+                    }
+                    .swipeActions {
+                        Button("Remove", role: .destructive) { pendingRemove = c.bucket }
+                        Button("Edit") { editing = c }.tint(.blue)
+                    }
+                }
+                NavigationLink { SetupView() } label: { Label("Add bucket", systemImage: "plus") }
+            } header: { Text("Buckets") } footer: {
+                Text("Tap a bucket to open it. Swipe left to edit its token or remove it.")
             }
             Section {
                 LabeledContent("Videos indexed", value: "\(library.allVideos.count)")
@@ -168,12 +192,22 @@ struct SettingsView: View {
                         "Thumbnails are grabbed from a frame ~10% into each video. To skip that, upload a JPG with the same name next to the video (clip.mp4 → clip.jpg).")
             }
             Section {
-                Button("Disconnect & remove keys", role: .destructive) { confirmSignOut = true }
+                Button("Remove all buckets & keys", role: .destructive) { confirmSignOut = true }
             }
         }
         .navigationTitle("Settings")
-        .confirmationDialog("Remove the saved R2 keys from this iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-            Button("Disconnect", role: .destructive) { player.stop(); library.signOut() }
+        .navigationDestination(item: $editing) { SetupView(editing: $0) }
+        .confirmationDialog("Remove all saved R2 keys from this iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Remove all", role: .destructive) { player.stop(); library.signOut() }
+        }
+        .confirmationDialog("Remove \(pendingRemove ?? "") and its keys from this iPhone?",
+                            isPresented: Binding(get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                guard let b = pendingRemove else { return }
+                if player.current?.bucket == b || library.connections.count == 1 { player.stop() }
+                library.remove(bucket: b)
+            }
         }
     }
 }

@@ -46,16 +46,18 @@ struct RootView: View {
                         FolderView(prefix: "")
                             .navigationDestination(for: FolderRoute.self) { FolderView(prefix: $0.prefix) }
                     }
-                        .miniPlayerInset(hidden: false)
+                        .id(library.activeBucket)
+                        .miniPlayerInset()
                         .tabItem { Label("Library", systemImage: "play.rectangle.on.rectangle") }
                         .tag(AppTab.library)
 
                     FeedView(isActiveTab: tab == .feed)
+                        .id(library.activeBucket)
                         .tabItem { Label("Feed", systemImage: "rectangle.stack.badge.play") }
                         .tag(AppTab.feed)
 
                     NavigationStack { PlaylistsView() }
-                        .miniPlayerInset(hidden: false)
+                        .miniPlayerInset()
                         .tabItem { Label("Playlists", systemImage: "music.note.list") }
                         .tag(AppTab.playlists)
 

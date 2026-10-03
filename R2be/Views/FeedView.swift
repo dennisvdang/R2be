@@ -7,7 +7,7 @@ enum FeedSource: Hashable {
 }
 
 /// Vertical, full-height, swipe-to-next video feed (Shorts/Reels style) over any folder or playlist.
-/// It drives the shared PlayerController with context == .feed, so the mini player and full
+/// It drives the shared PlayerController with isFeedQueue set, so the mini player and full
 /// player stay in sync if you leave the tab or expand a video.
 struct FeedView: View {
     let isActiveTab: Bool
@@ -15,14 +15,13 @@ struct FeedView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(PlaylistStore.self) private var playlists
     @Environment(PlayerController.self) private var player
-    @AppStorage("feedShuffled") private var shuffled = true
 
     @State private var source: FeedSource = .all
     @State private var items: [VideoItem] = []
     @State private var activeID: String?
     @State private var pendingAdd: PendingPlaylistAdd?
 
-    private var isFeedLive: Bool { player.context == .feed }
+    private var isFeedLive: Bool { player.isFeedQueue }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -119,7 +118,6 @@ struct FeedView: View {
             }
             Spacer()
             Button {
-                shuffled = true
                 rebuild(autostart: isActiveTab)
             } label: {
                 Image(systemName: "shuffle").font(.headline)
@@ -140,7 +138,7 @@ struct FeedView: View {
         case .folder(let p): list = library.videos(under: p, recursive: true)
         case .playlist(let id): list = playlists.playlist(id).map(library.resolve) ?? []
         }
-        if shuffled && source != .recent { list.shuffle() }
+        if source != .recent { list.shuffle() }
         items = Array(list.prefix(2000))
         // Start the new queue before moving the scroll position so onChange(activeID) sees it as current.
         if autostart, let first = items.first { start(at: first) }
@@ -148,7 +146,7 @@ struct FeedView: View {
     }
 
     private func start(at item: VideoItem) {
-        player.play(items, startAt: item, context: .feed, title: sourceName, present: false, keepGivenOrder: true)
+        player.play(items, startAt: item, title: sourceName, isFeed: true, present: false, keepGivenOrder: true)
     }
 }
 
@@ -223,7 +221,7 @@ private struct FeedPage: View {
             railButton("gobackward.30", "−30") { if isLive { player.skip(-PlayerController.skipInterval) } }
             railButton("goforward.30", "+30") { if isLive { player.skip(PlayerController.skipInterval) } }
             railButton("text.badge.plus", "Save", action: save)
-            if let url = library.client?.presignedURL(bucket: item.bucket, key: item.key, expires: 24 * 3600) {
+            if let url = library.shareURL(for: item) {
                 ShareLink(item: url) { railLabel("arrowshape.turn.up.right.fill", "Share") }
             }
             railButton("arrow.up.left.and.arrow.down.right", "Expand") {

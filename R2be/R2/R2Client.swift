@@ -1,9 +1,6 @@
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 
-struct R2Credentials: Codable, Equatable, Sendable {
+struct R2Credentials: Codable, Hashable, Sendable {
     enum Jurisdiction: String, Codable, CaseIterable, Sendable {
         case standard, eu, fedramp
         var label: String {
@@ -40,7 +37,6 @@ struct R2Object: Hashable, Codable, Sendable {
 
 struct ListPage: Sendable {
     var objects: [R2Object] = []
-    var commonPrefixes: [String] = []
     var isTruncated = false
     var nextContinuationToken: String?
 }
@@ -109,26 +105,22 @@ struct R2Client: Sendable {
         return BucketListParser.parse(data)
     }
 
-    func listObjects(bucket: String, prefix: String = "", delimiter: String? = nil,
-                     continuationToken: String? = nil, maxKeys: Int = 1000) async throws -> ListPage {
+    func listObjects(bucket: String, continuationToken: String? = nil, maxKeys: Int = 1000) async throws -> ListPage {
         var q = [URLQueryItem(name: "list-type", value: "2"),
                  URLQueryItem(name: "max-keys", value: String(maxKeys))]
-        if !prefix.isEmpty { q.append(URLQueryItem(name: "prefix", value: prefix)) }
-        if let delimiter { q.append(URLQueryItem(name: "delimiter", value: delimiter)) }
         if let continuationToken { q.append(URLQueryItem(name: "continuation-token", value: continuationToken)) }
         let data = try await get(bucketURL(bucket, query: q))
         guard let page = ListObjectsParser.parse(data) else { throw R2Error.badResponse }
         return page
     }
 
-    /// Walks every page of the bucket (no delimiter) and returns all objects.
-    func listAllObjects(bucket: String, prefix: String = "",
-                        progress: (@Sendable (Int) -> Void)? = nil) async throws -> [R2Object] {
+    /// Walks every page of the bucket and returns all objects.
+    func listAllObjects(bucket: String, progress: (@Sendable (Int) -> Void)? = nil) async throws -> [R2Object] {
         var all: [R2Object] = []
         var token: String?
         repeat {
             try Task.checkCancellation()
-            let page = try await listObjects(bucket: bucket, prefix: prefix, continuationToken: token)
+            let page = try await listObjects(bucket: bucket, continuationToken: token)
             all.append(contentsOf: page.objects)
             progress?(all.count)
             token = page.isTruncated ? page.nextContinuationToken : nil
