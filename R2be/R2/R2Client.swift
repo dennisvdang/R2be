@@ -125,21 +125,6 @@ struct R2Client: Sendable {
         return page
     }
 
-    /// Walks every page under `prefix` and returns all objects.
-    func listAllObjects(bucket: String, prefix: String = "",
-                        progress: (@Sendable (Int) -> Void)? = nil) async throws -> [R2Object] {
-        var all: [R2Object] = []
-        var token: String?
-        repeat {
-            try Task.checkCancellation()
-            let page = try await listObjects(bucket: bucket, prefix: prefix, continuationToken: token)
-            all.append(contentsOf: page.objects)
-            progress?(all.count)
-            token = page.isTruncated ? page.nextContinuationToken : nil
-        } while token != nil
-        return all
-    }
-
     private func get(_ url: URL) async throws -> Data {
         guard !credentials.accountId.isEmpty, !credentials.accessKeyId.isEmpty, !credentials.secretAccessKey.isEmpty else {
             throw R2Error.invalidCredentials

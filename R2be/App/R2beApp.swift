@@ -35,6 +35,7 @@ struct RootView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerController.self) private var player
     @Environment(\.scenePhase) private var scenePhase
+    @State private var indexingTask: UIBackgroundTaskIdentifier = .invalid
     @State private var tab: AppTab = .library
 
     var body: some View {
@@ -67,6 +68,17 @@ struct RootView: View {
                 }
                 .onAppear { library.refreshIfStale() }
                 .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshIfStale() } }
+
+                // Auto-lock suspends the app and cuts the listing off, so stay awake while indexing.
+                // Leaving the app buys ~30 s of background time; the listing resumes on return after that.
+                .onChange(of: library.isIndexing) { _, indexing in
+                    UIApplication.shared.isIdleTimerDisabled = indexing
+                    if indexing {
+                        indexingTask = UIApplication.shared.beginBackgroundTask { endIndexingTask() }
+                    } else {
+                        endIndexingTask()
+                    }
+                }
             } else {
                 NavigationStack { SetupView(isInitialSetup: true) }
             }
@@ -74,5 +86,11 @@ struct RootView: View {
         .fullScreenCover(isPresented: $player.isPresented) {
             PlayerView()
         }
+    }
+
+    private func endIndexingTask() {
+        guard indexingTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(indexingTask)
+        indexingTask = .invalid
     }
 }

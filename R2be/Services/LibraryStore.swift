@@ -39,6 +39,20 @@ final class LibraryStore {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
+    /// Pages listed so far by an unfinished refresh. A refresh that dies when the phone locks
+    /// picks up from here instead of starting over.
+    /// ponytail: kept in memory only, so a refresh restarts if iOS kills the app; persist it if that bites.
+    @ObservationIgnored private var partial: PartialIndex?
+
+    private struct PartialIndex {
+        let bucket: String
+        let prefix: String
+        var videos: [VideoItem] = []
+        var imageKeys = Set<String>()
+        var scanned = 0
+        var token: String?
+    }
+
     private static let activeBucketKey = "activeBucket"
 
     init() {
@@ -111,20 +125,36 @@ final class LibraryStore {
         refreshTask?.cancel()
         let bucket = activeBucket
         let prefix = rootPrefix
+        let resume = partial.flatMap { $0.bucket == bucket && $0.prefix == prefix ? $0 : nil }
+            ?? PartialIndex(bucket: bucket, prefix: prefix)
         isIndexing = true
-        indexProgress = 0
+        indexProgress = resume.scanned
         lastError = nil
         refreshTask = Task {
+            var run = resume
             do {
-                let objects = try await client.listAllObjects(bucket: bucket, prefix: prefix) { n in
-                    Task { @MainActor [weak self] in self?.indexProgress = n }
-                }
-                let index = Self.buildIndex(bucket: bucket, objects: objects)
+                repeat {
+                    let page = try await client.listObjects(bucket: bucket, prefix: prefix, continuationToken: run.token)
+                    try Task.checkCancellation()
+                    let part = Self.buildIndex(bucket: bucket, objects: page.objects)
+                    run.videos += part.videos
+                    run.imageKeys.formUnion(part.imageKeys)
+                    run.scanned += page.objects.count
+                    run.token = page.isTruncated ? page.nextContinuationToken : nil
+                    self.partial = run
+                    self.indexProgress = run.scanned
+                } while run.token != nil
+
+                self.partial = nil
+                let index = BucketIndex(bucket: bucket, videos: run.videos, imageKeys: run.imageKeys, builtAt: Date())
                 self.indexes[bucket] = index
                 self.folderCache = [:]
                 Self.saveIndex(index)
             } catch {
                 if !Task.isCancelled { self.lastError = error.localizedDescription }
+
+                // R2 rejected the saved page token; the next refresh starts clean.
+                if case .http(400, _)? = error as? R2Error { self.partial = nil }
             }
 
             // A newer refresh (e.g. after switching buckets) owns the indexing state now.
