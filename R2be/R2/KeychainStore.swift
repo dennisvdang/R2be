@@ -16,9 +16,12 @@ enum KeychainStore {
         ]
         var out: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return [] }
-        if let list = try? JSONDecoder().decode([R2Credentials].self, from: data) { return list }
+        return decode(data)
+    }
 
-        // Builds before multi-bucket support saved a single connection.
+    /// Reads the saved blob: a list of connections, or the single connection older builds saved.
+    static func decode(_ data: Data) -> [R2Credentials] {
+        if let list = try? JSONDecoder().decode([R2Credentials].self, from: data) { return list }
         return (try? JSONDecoder().decode(R2Credentials.self, from: data)).map { [$0] } ?? []
     }
 

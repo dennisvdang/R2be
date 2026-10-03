@@ -41,4 +41,16 @@ targets:
           - audio            # keep playing with the screen locked / app in background
         ITSAppUsesNonExemptEncryption: false
     scheme:
-      testTargets: []
+      testTargets: [R2beTests]
+  R2beTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: R2beTests
+    dependencies:
+      - target: R2be
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.r2be.tests
+        CODE_SIGNING_ALLOWED: NO

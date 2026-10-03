@@ -14,6 +14,9 @@ final class PiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     static var isSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
 
+    /// Whether leaving the app mid-video hands off to PiP on its own.
+    var startsAutomatically: Bool { controller?.canStartPictureInPictureAutomaticallyFromInline ?? false }
+
     /// Called on the main thread. Starting PiP closes the full-screen player so you can use the
     /// app underneath; tapping "back to app" in the PiP window reopens it.
     @ObservationIgnored var onWillStart: (@MainActor () -> Void)?
@@ -25,6 +28,9 @@ final class PiPManager: NSObject, AVPictureInPictureControllerDelegate {
     @ObservationIgnored private var candidates: [WeakLayer] = []
 
     private struct WeakLayer { weak var layer: AVPlayerLayer? }
+
+    /// Surfaces detached so audio keeps playing in the background, with the player to give back.
+    @ObservationIgnored private var parked: [(layer: AVPlayerLayer, player: AVPlayer)] = []
 
     // MARK: Surfaces
 
@@ -62,6 +68,23 @@ final class PiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     private static func isOnScreen(_ layer: AVPlayerLayer?) -> Bool {
         (layer?.delegate as? UIView)?.window != nil
+    }
+
+    // MARK: Background audio
+
+    /// iOS pauses a video that is still attached to a layer once the app is in the background.
+    /// Detaching every surface lets the audio carry on (lock screen, or PiP that didn't start).
+    func detachLayersForBackground() {
+        for case let layer? in candidates.map(\.layer) {
+            guard let player = layer.player else { continue }
+            parked.append((layer, player))
+            layer.player = nil
+        }
+    }
+
+    func reattachLayers() {
+        for p in parked { p.layer.player = p.player }
+        parked = []
     }
 
     // MARK: Control

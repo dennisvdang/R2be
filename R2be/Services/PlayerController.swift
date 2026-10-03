@@ -98,6 +98,32 @@ final class PlayerController {
         configureRemoteCommands()
         pip.onWillStart = { [weak self] in self?.isPresented = false }
         pip.onRestore = { [weak self] in self?.isPresented = true }
+
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.wasPlayingOnResign = self?.isPlaying ?? false }
+        }
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keepPlayingInBackground() }
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pip.reattachLayers() }
+        }
+    }
+
+    @ObservationIgnored private var wasPlayingOnResign = false
+
+    /// Leaving the app mid-video: automatic PiP gets a moment to start. If it didn't (screen locked,
+    /// or PiP off in iOS Settings), the video detaches from its surfaces so the audio keeps playing.
+    private func keepPlayingInBackground() {
+        guard wasPlayingOnResign else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.pip.isActive, UIApplication.shared.applicationState == .background else { return }
+                self.pip.detachLayersForBackground()
+                self.player.playImmediately(atRate: self.rate)
+            }
+        }
     }
 
     // MARK: - Derived

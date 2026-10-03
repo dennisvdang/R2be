@@ -1,0 +1,48 @@
+name: Tests
+
+# Unit tests on an iPhone simulator, on every push and pull request, so a change that breaks
+# existing behavior shows up as a red check before it reaches a build you install.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Run unit tests
+        run: |
+          # Newest available iOS runtime, first iPhone on it.
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted((k for k in devices if ".iOS-" in k), reverse=True):
+              phones = [d for d in devices[runtime] if d["name"].startswith("iPhone")]
+              if phones:
+                  print(phones[0]["udid"]); break
+          ')
+          echo "Simulator: $udid"
+          xcodebuild test -project R2be.xcodeproj -scheme R2be -destination "id=$udid" \
+            CODE_SIGNING_ALLOWED=NO > xcodebuild-test.log 2>&1 && status=0 || status=$?
+          grep -E "Test Case .*(passed|failed|skipped)|error:|Executed|TEST (SUCCEEDED|FAILED)" xcodebuild-test.log || true
+          [ "$status" -eq 0 ] || exit "$status"
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: xcodebuild-test.log
