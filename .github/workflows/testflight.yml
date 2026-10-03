@@ -16,7 +16,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Pushes to main skip TestFlight until the secrets exist; a manual run still reports what's missing.
+  ready:
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - id: check
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: echo "ok=$([ -n "$ASC_KEY_P8" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   upload:
+    needs: ready
+    if: needs.ready.outputs.ok == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 45
     env:
