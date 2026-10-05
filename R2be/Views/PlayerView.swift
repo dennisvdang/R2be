@@ -22,8 +22,10 @@ struct PlayerView: View {
             ZStack(alignment: .top) {
                 Color.black.ignoresSafeArea()
                 if landscape {
+
+                    // Controls stay inside the safe area so the scrubber clears the home indicator;
+                    // the picture itself still runs edge to edge (see videoArea).
                     videoArea(landscape: true)
-                        .ignoresSafeArea()
                 } else if fill {
 
                     // Portrait fill: the video takes the whole screen and the info panel hides.
@@ -40,6 +42,9 @@ struct PlayerView: View {
             .statusBarHidden(landscape)
         }
         .persistentSystemOverlays(.hidden)
+
+        // A sideways drag along the bottom edge would otherwise switch apps instead of scrubbing.
+        .defersSystemGestures(on: .bottom)
         .sheet(item: $pendingAdd) { AddToPlaylistSheet(pending: $0) }
         .onAppear {
             scheduleHide()
@@ -57,7 +62,7 @@ struct PlayerView: View {
     private func videoArea(landscape: Bool) -> some View {
         ZStack {
             VideoSurface(player: player.player, gravity: fill ? .resizeAspectFill : .resizeAspect, pip: player.pip)
-                .ignoresSafeArea(edges: fill ? .all : [])
+                .ignoresSafeArea(edges: fill || landscape ? .all : [])
 
             // Gesture layer: single tap toggles controls, double tap left/right skips 30 s.
             HStack(spacing: 0) {
@@ -166,8 +171,8 @@ private struct ControlsOverlay: View {
                 Spacer()
                 bottomBar
             }
-            .padding(.horizontal, landscape ? 44 : 12)
-            .padding(.top, landscape ? 16 : 8)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
         }
         .foregroundStyle(.white)
     }
@@ -272,7 +277,7 @@ private struct ControlsOverlay: View {
                 onInteract()
             })
             .tint(.red)
-            .padding(.horizontal, landscape ? -28 : -6)   // run the scrubber nearly edge to edge
+            .padding(.horizontal, -6)   // run the scrubber nearly edge to edge
         }
     }
 }
@@ -538,13 +543,37 @@ enum Orientation {
     private(set) static var lock: UIInterfaceOrientationMask = .allButUpsideDown
     static var isFullscreen: Bool { lock == .landscape }
     private static var uprightObserver: NSObjectProtocol?
+    private static var rotationObserver: NSObjectProtocol?
+    private static var sawLandscape = false
 
     static func enterFullscreen() {
         stopWaitingForUpright()
         apply(.landscape)
+        exitWhenTurnedUpright()
+    }
+
+    /// Turning the phone back upright leaves fullscreen. It only arms once the phone has been held
+    /// sideways, so tapping fullscreen while holding it upright doesn't bounce straight back out.
+    private static func exitWhenTurnedUpright() {
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        sawLandscape = UIDevice.current.orientation.isLandscape
+        rotationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let device = UIDevice.current.orientation
+                if device.isLandscape { Orientation.sawLandscape = true }
+                if Orientation.sawLandscape, device == .portrait, Orientation.isFullscreen { Orientation.exitFullscreen() }
+            }
+        }
+    }
+
+    private static func stopWatchingRotation() {
+        if let rotationObserver { NotificationCenter.default.removeObserver(rotationObserver) }
+        rotationObserver = nil
     }
 
     static func exitFullscreen() {
+        stopWatchingRotation()
         apply(.portrait)
         let device = UIDevice.current.orientation
         if device == .portrait || !device.isValidInterfaceOrientation {
