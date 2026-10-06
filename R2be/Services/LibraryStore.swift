@@ -37,10 +37,14 @@ final class LibraryStore {
     var lastError: String?
 
     @ObservationIgnored private var folderCache: [String: FolderContents] = [:] {
-        didSet { if folderCache.isEmpty { seriesCache = nil } }
+        didSet { if folderCache.isEmpty { seriesCache = nil; nameIndex = nil; relatedMemo = nil } }
     }
     /// Series stem → videos, built lazily for Related (see `related(to:)`).
     @ObservationIgnored private var seriesCache: [String: [VideoItem]]?
+    /// Trigram vectors of every name in `allVideos`, built lazily for Related's similar names.
+    @ObservationIgnored private var nameIndex: NameIndex?
+    /// The last Related answer, so redraws of the player don't recompute it.
+    @ObservationIgnored private var relatedMemo: (id: String, videos: [VideoItem])?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
@@ -248,35 +252,69 @@ final class LibraryStore {
 
     // MARK: Related
 
-    /// Other parts of the same video: files whose names match once a trailing part marker is
-    /// removed, e.g. "Trip-pt1", "Trip pt 2", "Trip_part03", "Trip (4)" → "trip". Matching is on the
-    /// whole remaining name, so "pt1" alone never links unrelated videos. Includes `item`, in part order.
+    /// Videos related to `item`, `item` included. First choice is the rest of its series: names that
+    /// match once every number and part word is taken out ("Trip day1", "Trip day 2", "Trip-pt3",
+    /// "Trip (4)"), in number order. With no series, it falls back to similar names (see
+    /// `similarNames`). Empty when nothing qualifies.
     func related(to item: VideoItem) -> [VideoItem] {
+        if let memo = relatedMemo, memo.id == item.id { return memo.videos }
+        var result: [VideoItem] = []
         let stem = Self.seriesStem(item.title)
-        guard stem.count >= 2 else { return [] }
-        if seriesCache == nil {
-            seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
+        if stem.count >= 2 {
+            if seriesCache == nil {
+                seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
+            }
+            let parts = seriesCache?[stem] ?? []
+            if parts.count > 1 {
+                result = parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            }
         }
-        let parts = seriesCache?[stem] ?? []
-        guard parts.count > 1 else { return [] }
-        return parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        if result.isEmpty {
+            let similar = similarNames(to: item)
+            if !similar.isEmpty { result = [item] + similar }
+        }
+        relatedMemo = (item.id, result)
+        return result
     }
 
-    nonisolated static func seriesStem(_ title: String) -> String {
-        var s = title.lowercased()
-            .replacingOccurrences(of: "[._]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-        let markers = [
-            "(?:^|[\\s\\-–])(?:pt|part|ep|episode|e|disc|cd|vol|volume|chapter|ch)\\s*\\d{1,3}$",   // -pt1, part 02, ep3
-            "\\s*\\(\\d{1,3}\\)$",                                                             // (2)
-            "(?:\\s*[\\-–#]\\s*|\\s+)\\d{1,2}$",                                                 // " 2", "-3", "#4"
-        ]
-        for pattern in markers {
-            if let r = s.range(of: pattern, options: .regularExpression) { s.removeSubrange(r); break }
+    /// Names that read alike, compared as overlapping three-letter chunks (trigrams). That catches
+    /// glued words ("tripday" ~ "trip day"), abbreviations and typos ("hilites" ~ "highlights").
+    /// Chunks shared by most of the library count for little, so a word every file carries (like
+    /// "converted") doesn't make everything look related. Best match first, same folder breaking ties.
+    private func similarNames(to item: VideoItem, limit: Int = 30) -> [VideoItem] {
+        let videos = allVideos
+        if nameIndex == nil { nameIndex = NameIndex(titles: videos.map(\.title)) }
+        guard let index = nameIndex, index.vectors.count == videos.count,
+              let i0 = videos.firstIndex(of: item), !index.vectors[i0].isEmpty else { return [] }
+        let target = index.vectors[i0]
+
+        // Only names sharing at least one trigram are scored.
+        var candidates = Set<Int>()
+        for gram in target.keys { candidates.formUnion(index.postings[gram] ?? []) }
+        candidates.remove(i0)
+        let scored = candidates.compactMap { i -> (video: VideoItem, score: Double)? in
+            let v = videos[i]
+            let score = NameIndex.cosine(target, index.vectors[i]) + (v.folder == item.folder ? 0.1 : 0)
+            return score >= 0.5 ? (v, score) : nil
         }
-        return s.trimmingCharacters(in: CharacterSet(charactersIn: " -–#"))
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return scored
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.video.title.localizedStandardCompare($1.video.title) == .orderedAscending }
+            .prefix(limit).map(\.video)
     }
+
+    /// The name with numbers, punctuation and part words ("pt", "part", "ep", "vol"…) removed,
+    /// lowercased: "Trip day1" and "Trip_Day 02" both give "trip day".
+    nonisolated static func seriesStem(_ title: String) -> String {
+        let words = title.lowercased()
+            .replacingOccurrences(of: "[^\\p{L}]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .filter { !partWords.contains(String($0)) }
+        return words.joined(separator: " ")
+    }
+
+    private nonisolated static let partWords: Set<String> = [
+        "pt", "part", "ep", "episode", "e", "s", "season", "disc", "cd", "vol", "volume", "chapter", "ch",
+    ]
 
     func video(bucket: String, key: String) -> VideoItem? {
         index(for: bucket)?.videos.first { $0.key == key }
@@ -365,5 +403,47 @@ final class LibraryStore {
 
     nonisolated private static func saveIndex(_ index: BucketIndex) {
         if let data = try? JSONEncoder().encode(index) { try? data.write(to: indexURL(bucket: index.bucket), options: .atomic) }
+    }
+}
+
+/// TF-IDF weighted trigram vectors of video names, unit length, with trigram → name positions.
+struct NameIndex: Sendable {
+    let vectors: [[String: Double]]
+    let postings: [String: [Int]]
+
+    init(titles: [String]) {
+        let grams = titles.map(Self.trigrams)
+        var documentFrequency: [String: Int] = [:]
+        for g in grams { for t in g.keys { documentFrequency[t, default: 0] += 1 } }
+        let n = Double(max(titles.count, 1))
+        var vectors: [[String: Double]] = []
+        var postings: [String: [Int]] = [:]
+        for (i, g) in grams.enumerated() {
+
+            // Smoothed IDF stays above zero, so a name made only of common chunks still has a vector.
+            var v: [String: Double] = [:]
+            for (t, count) in g { v[t] = Double(count) * log(1 + n / Double(documentFrequency[t] ?? 1)) }
+            let norm = v.values.reduce(0) { $0 + $1 * $1 }.squareRoot()
+            if norm > 0 {
+                for t in v.keys { v[t]! /= norm; postings[t, default: []].append(i) }
+            }
+            vectors.append(norm > 0 ? v : [:])
+        }
+        self.vectors = vectors
+        self.postings = postings
+    }
+
+    /// Overlapping three-letter chunks of the series stem, padded so word edges count.
+    static func trigrams(_ title: String) -> [String: Int] {
+        let chars = Array(" " + LibraryStore.seriesStem(title) + " ")
+        guard chars.count >= 3 else { return [:] }
+        var out: [String: Int] = [:]
+        for i in 0...(chars.count - 3) { out[String(chars[i..<i + 3]), default: 0] += 1 }
+        return out
+    }
+
+    static func cosine(_ a: [String: Double], _ b: [String: Double]) -> Double {
+        let (small, large) = a.count <= b.count ? (a, b) : (b, a)
+        return small.reduce(0) { $0 + $1.value * (large[$1.key] ?? 0) }
     }
 }

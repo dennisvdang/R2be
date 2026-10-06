@@ -1,6 +1,7 @@
 import AVFoundation
 import CryptoKit
 import UIKit
+import Vision
 
 /// Generates poster frames by streaming just enough of each video (moov atom + one keyframe) from
 /// its presigned URL. Results are cached in memory and on disk, keyed by object key + ETag.
@@ -11,6 +12,11 @@ actor ThumbnailService {
     private var inflight: [String: Task<UIImage?, Never>] = [:]
     private let limiter = AsyncLimiter(limit: 3)
     private let dir: URL
+
+    /// Vision feature prints of thumbnails (cache key → print), saved beside each thumbnail as
+    /// "<key>.print". They power "Looks similar" in Related.
+    private var prints: [String: VNFeaturePrintObservation] = [:]
+    private var printsLoaded = false
 
     init() {
         memory.countLimit = 400
@@ -34,6 +40,7 @@ actor ThumbnailService {
         let file = dir.appendingPathComponent(key + ".jpg")
         if let data = try? Data(contentsOf: file), let img = UIImage(data: data) {
             memory.setObject(img, forKey: key as NSString)
+            ensurePrint(of: img, key: key)
             return img
         }
         if let task = inflight[key] { return await task.value }
@@ -52,12 +59,63 @@ actor ThumbnailService {
         if let image {
             memory.setObject(image, forKey: key as NSString)
             if let jpg = image.jpegData(compressionQuality: 0.75) { try? jpg.write(to: file, options: .atomic) }
+            ensurePrint(of: image, key: key)
         }
         return image
     }
 
+    // MARK: Looks similar
+
+    /// Videos whose thumbnails look most like `item`'s, nearest first. Only videos whose thumbnails
+    /// have been made (shown at least once) can take part.
+    func lookalikes(of item: VideoItem, among videos: [VideoItem], limit: Int = 12) -> [VideoItem] {
+        loadPrintsIfNeeded()
+        guard let target = prints[Self.cacheKey(item)] else { return [] }
+        var scored: [(video: VideoItem, distance: Float)] = []
+        for v in videos where v != item {
+            guard let p = prints[Self.cacheKey(v)] else { continue }
+            var d: Float = 0
+            if (try? target.computeDistance(&d, to: p)) != nil { scored.append((v, d)) }
+        }
+        guard scored.count >= 4 else { return [] }
+
+        // Distances have no fixed scale, so keep only the clearly closer ones: under 70% of the
+        // median distance to everything else.
+        scored.sort { $0.distance < $1.distance }
+        let cutoff = scored[scored.count / 2].distance * 0.7
+        return scored.prefix { $0.distance <= cutoff }.prefix(limit).map(\.video)
+    }
+
+    private func ensurePrint(of image: UIImage, key: String) {
+        let file = dir.appendingPathComponent(key + ".print")
+        guard prints[key] == nil, !FileManager.default.fileExists(atPath: file.path),
+              let cg = image.cgImage else { return }
+        let request = VNGenerateImageFeaturePrintRequest()
+        try? VNImageRequestHandler(cgImage: cg).perform([request])
+        guard let print = request.results?.first else { return }
+        prints[key] = print
+        if let data = try? NSKeyedArchiver.archivedData(withRootObject: print, requiringSecureCoding: true) {
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
+    private func loadPrintsIfNeeded() {
+        guard !printsLoaded else { return }
+        printsLoaded = true
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for f in files where f.pathExtension == "print" {
+            let key = f.deletingPathExtension().lastPathComponent
+            guard prints[key] == nil, let data = try? Data(contentsOf: f),
+                  let print = try? NSKeyedUnarchiver.unarchivedObject(ofClass: VNFeaturePrintObservation.self, from: data)
+            else { continue }
+            prints[key] = print
+        }
+    }
+
     func clearCache() {
         memory.removeAllObjects()
+        prints = [:]
+        printsLoaded = false
         try? FileManager.default.removeItem(at: dir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }

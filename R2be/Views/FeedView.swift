@@ -252,44 +252,7 @@ private struct FeedPage: View {
     /// Scrubbable progress bar: drag (or tap) anywhere along it. The touch area is much taller
     /// than the thin bar, and the drag takes priority over the Feed's vertical paging.
     @ViewBuilder private var progress: some View {
-        let live = isLive && player.duration > 0
-        let scrubbing = scrubFraction != nil
-        GeometryReader { g in
-            let p = scrubFraction ?? (live ? min(player.currentTime / player.duration, 1) : 0)
-            let barHeight: CGFloat = scrubbing ? 6 : 3
-            let knob: CGFloat = scrubbing ? 16 : 10
-            ZStack(alignment: .bottomLeading) {
-                Color.clear
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.25))
-                    Capsule().fill(.red).frame(width: max(g.size.width * p, barHeight))
-                    if live {
-                        Circle().fill(.white)
-                            .frame(width: knob, height: knob)
-                            .offset(x: min(max(g.size.width * p - knob / 2, 0), g.size.width - knob))
-                            .shadow(radius: 2)
-                    }
-                }
-                .frame(height: barHeight)
-                .padding(.bottom, 6)
-                .animation(.easeOut(duration: 0.15), value: scrubbing)
-            }
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        guard live else { return }
-                        player.isScrubbing = true
-                        scrubFraction = max(0, min(v.location.x / max(g.size.width, 1), 1))
-                    }
-                    .onEnded { v in
-                        guard live else { return }
-                        let f = max(0, min(v.location.x / max(g.size.width, 1), 1))
-                        player.seek(to: f * player.duration)
-                        player.isScrubbing = false
-                        scrubFraction = nil
-                    })
-        }
+        Scrubber(fraction: $scrubFraction, enabled: isLive)
         .frame(height: 30)
         .overlay(alignment: .top) {
             if let f = scrubFraction {

@@ -12,7 +12,7 @@ struct PlayerView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var flash: Bool? = nil          // true = forward, false = back
     @State private var flashTask: Task<Void, Never>?
-    @State private var scrubValue: Double = 0
+    @State private var scrubFraction: Double?     // 0...1 while the scrubber is being dragged
     @State private var fill = false
     @State private var pendingAdd: PendingPlaylistAdd?
 
@@ -84,7 +84,7 @@ struct PlayerView: View {
             }
 
             if controlsVisible {
-                ControlsOverlay(landscape: landscape, fill: $fill, scrubValue: $scrubValue,
+                ControlsOverlay(landscape: landscape, fill: $fill, scrubFraction: $scrubFraction,
                                 onInteract: { scheduleHide() })
                     .transition(.opacity)
             }
@@ -154,7 +154,7 @@ struct PlayerView: View {
 private struct ControlsOverlay: View {
     let landscape: Bool
     @Binding var fill: Bool
-    @Binding var scrubValue: Double
+    @Binding var scrubFraction: Double?
     let onInteract: () -> Void
     @Environment(PlayerController.self) private var player
 
@@ -240,17 +240,22 @@ private struct ControlsOverlay: View {
     }
 
     // Bottom: time pill on the left, fullscreen alone on the right, scrubber along the bottom edge.
+    // The scrubber's touch area spans the whole strip, time pill included, so a sideways drag
+    // anywhere here seeks; only the fullscreen button sits on top of it.
     private var bottomBar: some View {
-        VStack(spacing: 2) {
+        ZStack(alignment: .bottom) {
+            Scrubber(fraction: $scrubFraction, onEnd: onInteract)
+                .padding(.horizontal, -6)   // run the track nearly edge to edge
             HStack(alignment: .bottom) {
                 HStack(spacing: 4) {
-                    Text(Format.duration(player.isScrubbing ? scrubValue : player.currentTime))
+                    Text(Format.duration(scrubFraction.map { $0 * player.duration } ?? player.currentTime))
                     Text("/").foregroundStyle(.white.opacity(0.6))
                     Text(Format.duration(player.duration)).foregroundStyle(.white.opacity(0.8))
                 }
                 .font(.subheadline.monospacedDigit().weight(.medium))
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(.black.opacity(0.45), in: Capsule())
+                .allowsHitTesting(false)
                 Spacer()
                 Button {
                     if landscape { Orientation.exitFullscreen() } else { Orientation.enterFullscreen() }
@@ -263,22 +268,9 @@ private struct ControlsOverlay: View {
                 }
                 .accessibilityLabel(landscape ? "Exit full screen" : "Full screen")
             }
-
-            // The drag owns the value from its first change; on release the seek holds the
-            // handle at the drop point until the player catches up.
-            Slider(value: Binding(get: { player.isScrubbing ? scrubValue : player.currentTime },
-                                  set: { scrubValue = $0; player.isScrubbing = true }),
-                   in: 0...max(player.duration, 1),
-                   onEditingChanged: { editing in
-                if !editing {
-                    player.seek(to: scrubValue)
-                    player.isScrubbing = false
-                }
-                onInteract()
-            })
-            .tint(.red)
-            .padding(.horizontal, -6)   // run the scrubber nearly edge to edge
+            .padding(.bottom, 20)   // sit above the track
         }
+        .frame(height: 72)
     }
 }
 
@@ -365,6 +357,7 @@ private struct PlayerInfoPanel: View {
 
     enum ListTab { case upNext, related }
     @State private var tab: ListTab = .upNext
+    @State private var lookalikes: [VideoItem] = []   // thumbnails that look like the current video's
 
     var body: some View {
         List {
@@ -405,6 +398,8 @@ private struct PlayerInfoPanel: View {
             }
 
             let related = player.current.map { library.related(to: $0) } ?? []
+            let looksSimilar = lookalikes.filter { !related.contains($0) && $0 != player.current }
+            let relatedCount = max(related.count - 1, 0) + looksSimilar.count
             Section {
                 switch tab {
                 case .upNext:
@@ -415,8 +410,8 @@ private struct PlayerInfoPanel: View {
                     }
                     .onDelete { player.removeFromUpNext(at: $0) }
                 case .related:
-                    if related.isEmpty {
-                        Text("No other parts found. Related lists videos with the same name ending in -pt1, pt 2, part 3, ep 4, (5) and so on.")
+                    if related.isEmpty && looksSimilar.isEmpty {
+                        Text("Nothing related found. Related lists the rest of a series (names that match apart from their numbers, like Trip day1 and Trip day 2), videos with similar names, and videos whose thumbnails look alike.")
                             .font(.footnote).foregroundStyle(.secondary)
                             .listRowBackground(Color.black)
                     }
@@ -427,20 +422,30 @@ private struct PlayerInfoPanel: View {
                             .disabled(isCurrent)
                             .listRowBackground(Color.black)
                     }
+                    if !looksSimilar.isEmpty {
+                        Text("Looks similar").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .listRowBackground(Color.black)
+                        ForEach(looksSimilar) { v in
+                            Button { player.playNow(v) } label: { videoRow(v) }
+                                .buttonStyle(.plain)
+                                .listRowBackground(Color.black)
+                        }
+                    }
                 }
             } header: {
                 HStack(spacing: 16) {
                     tabButton("Up next · \(player.upNext.count)", .upNext)
-                    tabButton("Related · \(max(related.count - 1, 0))", .related)
+                    tabButton("Related · \(relatedCount)", .related)
                     Spacer()
                     if tab == .upNext, player.shuffle {
                         Button { player.reshuffle() } label: { Label("Reshuffle", systemImage: "dice") }
                             .font(.caption)
-                    } else if tab == .related, let first = related.first {
+                    } else if tab == .related, relatedCount > 0, let current = player.current {
+                        let all = (related.isEmpty ? [current] : related) + looksSimilar
                         Button {
-                            player.play(related, startAt: first, shuffle: false,
+                            player.play(all, startAt: all.first, shuffle: false,
                                         title: "Related", present: false, keepGivenOrder: true)
-                        } label: { Label("Play all parts", systemImage: "play.fill") }
+                        } label: { Label("Play all", systemImage: "play.fill") }
                             .font(.caption)
                     }
                 }
@@ -450,6 +455,11 @@ private struct PlayerInfoPanel: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color.black)
+        .task(id: player.current?.id) {
+            lookalikes = []
+            guard let item = player.current else { return }
+            lookalikes = await ThumbnailService.shared.lookalikes(of: item, among: library.allVideos)
+        }
     }
 
     private func tabButton(_ title: String, _ value: ListTab) -> some View {

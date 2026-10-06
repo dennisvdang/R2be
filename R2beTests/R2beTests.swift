@@ -141,11 +141,27 @@ final class IndexTests: XCTestCase {
         XCTAssertEqual(index.imageKeys, ["a/clip.jpg"])
     }
 
-    func testRelatedPartsShareAStem() {
-        XCTAssertEqual(LibraryStore.seriesStem("Trip-pt1"), "trip")
-        XCTAssertEqual(LibraryStore.seriesStem("Trip pt 2"), "trip")
-        XCTAssertEqual(LibraryStore.seriesStem("Trip (4)"), "trip")
+    /// Related groups a series by its name with numbers and part words taken out, whatever the pattern.
+    func testSeriesMatchAcrossNumberingStyles() {
+        for name in ["Trip day1", "Trip_Day 02", "trip day10"] { XCTAssertEqual(LibraryStore.seriesStem(name), "trip day") }
+        for name in ["Trip-pt1", "Trip part 2", "Trip (4)", "Trip S01E03"] { XCTAssertEqual(LibraryStore.seriesStem(name), "trip") }
         XCTAssertNotEqual(LibraryStore.seriesStem("Alpha 2"), LibraryStore.seriesStem("Beta 2"))
+        XCTAssertEqual(LibraryStore.seriesStem("20240101_123456"), "")
+    }
+
+    /// Similar names are compared as trigrams, so glued words and abbreviations still match,
+    /// and a word every file shares counts for little.
+    func testTrigramSimilarity() {
+        let titles = ["tripday", "Trip day", "Beach sunset", "Trip highlights", "Trip hilites",
+                      "alpha converted", "beta converted", "gamma converted", "alpha converted copy"]
+        let index = NameIndex(titles: titles)
+        func sim(_ a: Int, _ b: Int) -> Double { NameIndex.cosine(index.vectors[a], index.vectors[b]) }
+
+        XCTAssertGreaterThan(sim(0, 1), 0.4)                    // glued vs spaced (+0.1 in the same folder clears 0.5)
+        XCTAssertEqual(sim(0, 2), 0, accuracy: 1e-9)            // nothing in common
+        XCTAssertGreaterThan(sim(3, 4), sim(3, 2))              // abbreviation beats unrelated
+        XCTAssertGreaterThan(sim(5, 8), sim(5, 6))              // the distinctive word outweighs "converted"
+        XCTAssertEqual(sim(1, 1), 1, accuracy: 1e-9)            // vectors are unit length
     }
 
     func testSearchIgnoresCaseAndSeparators() {

@@ -484,6 +484,62 @@ extension View {
     }
 }
 
+/// Progress bar you drag or tap anywhere along to seek; its whole frame is the touch area, so make
+/// the frame as tall as the strip that should scrub. Built from SwiftUI views rather than Slider so
+/// its drag wins over the swipe-to-change-video gestures on the video behind it.
+struct Scrubber: View {
+    /// 0...1 while dragging, nil otherwise; read it to show the time under the finger.
+    @Binding var fraction: Double?
+    var enabled = true
+    var onEnd: () -> Void = {}
+    @Environment(PlayerController.self) private var player
+
+    var body: some View {
+        let live = enabled && player.duration > 0
+        let dragging = fraction != nil
+        GeometryReader { g in
+            let p = fraction ?? (live ? min(player.currentTime / player.duration, 1) : 0)
+            let bar: CGFloat = dragging ? 6 : 3
+            let knob: CGFloat = dragging ? 16 : 10
+            ZStack(alignment: .bottomLeading) {
+                Color.clear
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.25))
+                    Capsule().fill(.red).frame(width: max(g.size.width * p, bar))
+                    if live {
+                        Circle().fill(.white)
+                            .frame(width: knob, height: knob)
+                            .offset(x: min(max(g.size.width * p - knob / 2, 0), g.size.width - knob))
+                            .shadow(radius: 2)
+                    }
+                }
+                .frame(height: bar)
+                .padding(.bottom, 6)
+                .animation(.easeOut(duration: 0.15), value: dragging)
+            }
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        guard live else { return }
+                        player.isScrubbing = true
+                        fraction = Self.clamped(v.location.x / max(g.size.width, 1))
+                    }
+                    .onEnded { v in
+                        guard live else { return }
+
+                        // Seek before clearing, so the bar holds the drop point until playback lands there.
+                        player.seek(to: Self.clamped(v.location.x / max(g.size.width, 1)) * player.duration)
+                        player.isScrubbing = false
+                        fraction = nil
+                        onEnd()
+                    })
+        }
+    }
+
+    private static func clamped(_ x: Double) -> Double { min(max(x, 0), 1) }
+}
+
 /// Big translucent skip bubble shown on double-tap, YouTube-style.
 struct SeekFlash: View {
     let forward: Bool
