@@ -443,7 +443,6 @@ struct NameIndex: Sendable {
     }
 
     static func cosine(_ a: [String: Double], _ b: [String: Double]) -> Double {
-        let (small, large) = a.count <= b.count ? (a, b) : (b, a)
-        return small.reduce(0) { $0 + $1.value * (large[$1.key] ?? 0) }
+        a.reduce(0) { $0 + $1.value * (b[$1.key] ?? 0) }
     }
 }

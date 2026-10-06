@@ -398,7 +398,7 @@ private struct PlayerInfoPanel: View {
             }
 
             let related = player.current.map { library.related(to: $0) } ?? []
-            let looksSimilar = lookalikes.filter { !related.contains($0) && $0 != player.current }
+            let looksSimilar = lookalikes.filter { !related.contains($0) }
             let relatedCount = max(related.count - 1, 0) + looksSimilar.count
             Section {
                 switch tab {
@@ -443,7 +443,7 @@ private struct PlayerInfoPanel: View {
                     } else if tab == .related, relatedCount > 0, let current = player.current {
                         let all = (related.isEmpty ? [current] : related) + looksSimilar
                         Button {
-                            player.play(all, startAt: all.first, shuffle: false,
+                            player.play(all, shuffle: false,
                                         title: "Related", present: false, keepGivenOrder: true)
                         } label: { Label("Play all", systemImage: "play.fill") }
                             .font(.caption)
