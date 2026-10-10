@@ -37,14 +37,12 @@ final class LibraryStore {
     var lastError: String?
 
     @ObservationIgnored private var folderCache: [String: FolderContents] = [:] {
-        didSet { if folderCache.isEmpty { seriesCache = nil; nameIndex = nil; relatedMemo = nil } }
+        didSet { if folderCache.isEmpty { seriesCache = nil; nameIndex = nil } }
     }
-    /// Series stem → videos, built lazily for Related (see `related(to:)`).
+    /// Series stem → videos, built lazily for Related (see `relatedPool(for:)`).
     @ObservationIgnored private var seriesCache: [String: [VideoItem]]?
     /// Trigram vectors of every name in `allVideos`, built lazily for Related's similar names.
     @ObservationIgnored private var nameIndex: NameIndex?
-    /// The last Related answer, so redraws of the player don't recompute it.
-    @ObservationIgnored private var relatedMemo: (id: String, videos: [VideoItem])?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
 
@@ -252,36 +250,59 @@ final class LibraryStore {
 
     // MARK: Related
 
-    /// Videos related to `item`, `item` included. First choice is the rest of its series: names that
-    /// match once every number and part word is taken out ("Trip day1", "Trip day 2", "Trip-pt3",
-    /// "Trip (4)"), in number order. With no series, it falls back to similar names (see
-    /// `similarNames`). Empty when nothing qualifies.
-    func related(to item: VideoItem) -> [VideoItem] {
-        if let memo = relatedMemo, memo.id == item.id { return memo.videos }
-        var result: [VideoItem] = []
+    /// Every other video, most related first, for Related to reveal in batches: the rest of its
+    /// series (the parts after it, then the ones before), names that read alike, the rest of its
+    /// folder, then the rest of the library in random order. A series is names that match once every
+    /// number and part word is taken out ("Trip day1", "Trip day 2", "Trip-pt3", "Trip (4)").
+    func relatedPool(for item: VideoItem) -> [VideoItem] {
+        var pool: [VideoItem] = []
+        var seen: Set<String> = [item.id]
+        func add(_ videos: some Sequence<VideoItem>) {
+            for v in videos where seen.insert(v.id).inserted { pool.append(v) }
+        }
+        let parts = seriesParts(of: item)
+        if let i = parts.firstIndex(of: item) {
+            add(parts[(i + 1)...])
+            add(parts[..<i])
+        }
+        add(similarNames(to: item))
+        add(allVideos.filter { $0.folder == item.folder }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending })
+        add(allVideos.shuffled())
+        return pool
+    }
+
+    /// The part after `item` in its series, if any.
+    func nextPart(after item: VideoItem) -> VideoItem? {
+        let parts = seriesParts(of: item)
+        return parts.firstIndex(of: item).flatMap { parts.indices.contains($0 + 1) ? parts[$0 + 1] : nil }
+    }
+
+    /// Newest uploads outside `item`'s folder (the whole library when there's only one folder),
+    /// so Related mixes in something new instead of circling one corner of the library.
+    func freshPool(for item: VideoItem) -> [VideoItem] {
+        let elsewhere = allVideos.filter { $0.folder != item.folder }
+        return (elsewhere.isEmpty ? allVideos : elsewhere)
+            .sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
+    }
+
+    /// `item`'s series in part order, `item` included; empty when it has none.
+    private func seriesParts(of item: VideoItem) -> [VideoItem] {
         let stem = Self.seriesStem(item.title)
-        if stem.count >= 2 {
-            if seriesCache == nil {
-                seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
-            }
-            let parts = seriesCache?[stem] ?? []
-            if parts.count > 1 {
-                result = parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-            }
+        guard stem.count >= 2 else { return [] }
+        if seriesCache == nil {
+            seriesCache = Dictionary(grouping: allVideos) { Self.seriesStem($0.title) }
         }
-        if result.isEmpty {
-            let similar = similarNames(to: item)
-            if !similar.isEmpty { result = [item] + similar }
-        }
-        relatedMemo = (item.id, result)
-        return result
+        let parts = seriesCache?[stem] ?? []
+        guard parts.count > 1 else { return [] }
+        return parts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     /// Names that read alike, compared as overlapping three-letter chunks (trigrams). That catches
     /// glued words ("tripday" ~ "trip day"), abbreviations and typos ("hilites" ~ "highlights").
     /// Chunks shared by most of the library count for little, so a word every file carries (like
     /// "converted") doesn't make everything look related. Best match first, same folder breaking ties.
-    private func similarNames(to item: VideoItem, limit: Int = 30) -> [VideoItem] {
+    private func similarNames(to item: VideoItem) -> [VideoItem] {
         let videos = allVideos
         if nameIndex == nil { nameIndex = NameIndex(titles: videos.map(\.title)) }
         guard let index = nameIndex, index.vectors.count == videos.count,
@@ -295,11 +316,11 @@ final class LibraryStore {
         let scored = candidates.compactMap { i -> (video: VideoItem, score: Double)? in
             let v = videos[i]
             let score = NameIndex.cosine(target, index.vectors[i]) + (v.folder == item.folder ? 0.1 : 0)
-            return score >= 0.5 ? (v, score) : nil
+            return score >= 0.3 ? (v, score) : nil
         }
         return scored
             .sorted { $0.score != $1.score ? $0.score > $1.score : $0.video.title.localizedStandardCompare($1.video.title) == .orderedAscending }
-            .prefix(limit).map(\.video)
+            .map(\.video)
     }
 
     /// The name with numbers, punctuation and part words ("pt", "part", "ep", "vol"…) removed,

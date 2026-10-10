@@ -68,7 +68,7 @@ actor ThumbnailService {
 
     /// Videos whose thumbnails look most like `item`'s, nearest first. Only videos whose thumbnails
     /// have been made (shown at least once) can take part.
-    func lookalikes(of item: VideoItem, among videos: [VideoItem], limit: Int = 12) -> [VideoItem] {
+    func lookalikes(of item: VideoItem, among videos: [VideoItem]) -> [VideoItem] {
         loadPrintsIfNeeded()
         guard let target = prints[Self.cacheKey(item)] else { return [] }
         var scored: [(video: VideoItem, distance: Float)] = []
@@ -77,13 +77,7 @@ actor ThumbnailService {
             var d: Float = 0
             if (try? target.computeDistance(&d, to: p)) != nil { scored.append((v, d)) }
         }
-        guard scored.count >= 4 else { return [] }
-
-        // Distances have no fixed scale, so keep only the clearly closer ones: under 70% of the
-        // median distance to everything else.
-        scored.sort { $0.distance < $1.distance }
-        let cutoff = scored[scored.count / 2].distance * 0.7
-        return scored.prefix { $0.distance <= cutoff }.prefix(limit).map(\.video)
+        return scored.sorted { $0.distance < $1.distance }.map(\.video)
     }
 
     private func ensurePrint(of image: UIImage, key: String) {

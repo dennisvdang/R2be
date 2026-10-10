@@ -42,6 +42,7 @@ struct PlayerView: View {
             .statusBarHidden(landscape)
         }
         .persistentSystemOverlays(.hidden)
+        .modifier(TranslatedCaptions(captions: player.captions))
 
         // A sideways drag along the bottom edge would otherwise switch apps instead of scrubbing.
         .defersSystemGestures(on: .bottom)
@@ -87,6 +88,26 @@ struct PlayerView: View {
                 ControlsOverlay(landscape: landscape, fill: $fill, scrubFraction: $scrubFraction,
                                 onInteract: { scheduleHide() })
                     .transition(.opacity)
+            }
+
+            // Subtitles sit above the controls while they show, near the bottom edge otherwise.
+            if player.captions.isOn {
+                let text = player.captions.line.isEmpty ? (player.captions.status ?? "") : player.captions.line
+                if !text.isEmpty {
+                    VStack {
+                        Spacer()
+                        Text(text)
+                            .font(player.captions.line.isEmpty ? .footnote : .callout.weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, controlsVisible ? 88 : 16)
+                    }
+                    .allowsHitTesting(false)
+                    .animation(.easeOut(duration: 0.2), value: controlsVisible)
+                }
             }
 
             if let err = player.errorMessage {
@@ -327,6 +348,23 @@ private struct PlayerSettingsMenu<MenuLabel: View>: View {
             if landscape {
                 Toggle(isOn: $fill) { Label("Zoom to fill", systemImage: "aspectratio") }
             }
+            Section("Subtitles") {
+                Toggle(isOn: Binding(get: { player.captions.isOn }, set: { player.captions.isOn = $0 })) {
+                    Label("Translated subtitles", systemImage: "captions.bubble")
+                }
+                if player.captions.isOn {
+                    Picker(selection: Binding(get: { player.captions.spokenOverride }, set: { player.captions.spokenOverride = $0 })) {
+                        Text("Auto" + (player.captions.detectedLanguage.map { " (\(LiveCaptions.name(of: $0)))" } ?? ""))
+                            .tag(Locale.Language?.none)
+                        ForEach(LiveCaptions.commonLanguages, id: \.self) { lang in
+                            Text(LiveCaptions.name(of: lang)).tag(Optional(lang))
+                        }
+                    } label: {
+                        Label("Spoken language", systemImage: "waveform")
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
             if PiPManager.isSupported {
                 Button { player.pip.toggle() } label: {
                     Label(player.pip.isActive ? "Stop Picture in Picture" : "Picture in Picture", systemImage: "pip.enter")
@@ -355,9 +393,6 @@ private struct PlayerInfoPanel: View {
     @AppStorage("disableShare") private var disableShare = true
     @State private var downloads = DownloadStore.shared
 
-    enum ListTab { case upNext, related }
-    @State private var tab: ListTab = .upNext
-    @State private var lookalikes: [VideoItem] = []   // thumbnails that look like the current video's
 
     var body: some View {
         List {
@@ -397,91 +432,38 @@ private struct PlayerInfoPanel: View {
                 }
             }
 
-            let related = player.current.map { library.related(to: $0) } ?? []
-            let looksSimilar = lookalikes.filter { !related.contains($0) }
-            let relatedCount = max(related.count - 1, 0) + looksSimilar.count
+            // Related replaces Up Next: once the queue runs out, Next and autoplay play the top one.
             Section {
-                switch tab {
-                case .upNext:
-                    ForEach(player.upNext) { v in
-                        Button { player.jump(to: v) } label: { videoRow(v) }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Color.black)
+                ForEach(player.related) { v in
+                    Button { player.playNow(v) } label: { videoRow(v) }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.black)
+                }
+                if player.canShowMoreRelated {
+                    Button { player.showMoreRelated() } label: {
+                        Label("Show more", systemImage: "chevron.down")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
                     }
-                    .onDelete { player.removeFromUpNext(at: $0) }
-                case .related:
-                    if related.isEmpty && looksSimilar.isEmpty {
-                        Text("Nothing related found. Related lists the rest of a series (names that match apart from their numbers, like Trip day1 and Trip day 2), videos with similar names, and videos whose thumbnails look alike.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                            .listRowBackground(Color.black)
-                    }
-                    ForEach(related) { v in
-                        let isCurrent = v == player.current
-                        Button { player.playNow(v) } label: { videoRow(v, nowPlaying: isCurrent) }
-                            .buttonStyle(.plain)
-                            .disabled(isCurrent)
-                            .listRowBackground(Color.black)
-                    }
-                    if !looksSimilar.isEmpty {
-                        Text("Looks similar").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            .listRowBackground(Color.black)
-                        ForEach(looksSimilar) { v in
-                            Button { player.playNow(v) } label: { videoRow(v) }
-                                .buttonStyle(.plain)
-                                .listRowBackground(Color.black)
-                        }
-                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.black)
                 }
             } header: {
-                HStack(spacing: 16) {
-                    tabButton("Up next · \(player.upNext.count)", .upNext)
-                    tabButton("Related · \(relatedCount)", .related)
-                    Spacer()
-                    if tab == .upNext, player.shuffle {
-                        Button { player.reshuffle() } label: { Label("Reshuffle", systemImage: "dice") }
-                            .font(.caption)
-                    } else if tab == .related, relatedCount > 0, let current = player.current {
-                        let all = (related.isEmpty ? [current] : related) + looksSimilar
-                        Button {
-                            player.play(all, shuffle: false,
-                                        title: "Related", present: false, keepGivenOrder: true)
-                        } label: { Label("Play all", systemImage: "play.fill") }
-                            .font(.caption)
-                    }
-                }
-                .textCase(nil)
+                Text("Related").font(.subheadline.weight(.semibold)).foregroundStyle(.white).textCase(nil)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color.black)
-        .task(id: player.current?.id) {
-            lookalikes = []
-            guard let item = player.current else { return }
-            lookalikes = await ThumbnailService.shared.lookalikes(of: item, among: library.allVideos)
-        }
     }
 
-    private func tabButton(_ title: String, _ value: ListTab) -> some View {
-        Button { withAnimation(.easeOut(duration: 0.15)) { tab = value } } label: {
-            Text(title)
-                .font(.subheadline.weight(tab == value ? .semibold : .regular))
-                .foregroundStyle(tab == value ? Color.white : Color.secondary)
-                .padding(.bottom, 4)
-                .overlay(alignment: .bottom) {
-                    if tab == value { Rectangle().fill(Color.red).frame(height: 2) }
-                }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func videoRow(_ v: VideoItem, nowPlaying: Bool = false) -> some View {
+    private func videoRow(_ v: VideoItem) -> some View {
         HStack(spacing: 10) {
             ThumbnailView(item: v).frame(width: 120).clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
                 Text(v.title).font(.subheadline).lineLimit(2)
-                Text(nowPlaying ? "Now playing" : v.folderDisplay)
-                    .font(.caption).foregroundStyle(nowPlaying ? Color.red : Color.secondary).lineLimit(1)
+                Text(v.folderDisplay).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }

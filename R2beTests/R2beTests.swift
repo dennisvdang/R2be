@@ -203,6 +203,99 @@ final class PlaybackTests: XCTestCase {
     }
 }
 
+// MARK: - Related
+
+/// Repeatable random numbers, so a test sees the same draws every run.
+private struct SeededRandom: RandomNumberGenerator {
+    var state: UInt64
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+}
+
+final class RelatedBatchTests: XCTestCase {
+    private func videos(_ prefix: String, _ n: Int) -> [VideoItem] {
+        (0..<n).map { VideoItem(bucket: "b", key: "\(prefix)\($0).mp4", size: 1, lastModified: nil, etag: "e") }
+    }
+
+    private func batch(names: [VideoItem], looks: [VideoItem], fresh: [VideoItem], pinned: VideoItem? = nil,
+                       excluding: Set<String> = [], weight: (VideoItem) -> Double = { _ in 1 },
+                       seed: UInt64 = 1) -> [VideoItem] {
+        var rng = SeededRandom(state: seed)
+        return PlayerController.relatedBatch(names: names, looks: looks, fresh: fresh, pinned: pinned,
+                                             excluding: excluding, weight: weight, using: &rng)
+    }
+
+    /// A batch is 7: 4 by name (the next part first), 1 new upload from elsewhere, 2 look-alikes.
+    func testBatchMixAndPinnedNextPart() {
+        let next = VideoItem(bucket: "b", key: "next.mp4", size: 1, lastModified: nil, etag: "e")
+        let result = batch(names: [next] + videos("n", 20), looks: videos("l", 20), fresh: videos("f", 20), pinned: next)
+        XCTAssertEqual(result.count, 7)
+        XCTAssertEqual(result.first, next)
+        XCTAssertEqual(result.filter { $0.key.hasPrefix("n") || $0 == next }.count, 4)
+        XCTAssertEqual(result.filter { $0.key.hasPrefix("f") }.count, 1)
+        XCTAssertEqual(result.filter { $0.key.hasPrefix("l") }.count, 2)
+        XCTAssertEqual(Set(result.map(\.id)).count, 7)
+    }
+
+    /// The same video gets different suggestions on different visits.
+    func testBatchesVaryBetweenVisits() {
+        let names = videos("n", 30), looks = videos("l", 30), fresh = videos("f", 30)
+        let draws = (1...5).map { seed in batch(names: names, looks: looks, fresh: fresh, seed: seed).map(\.id) }
+        XCTAssertGreaterThan(Set(draws).count, 1)
+    }
+
+    /// Played or already-shown videos are demoted; at weight 0 they're skipped while others remain.
+    func testDemotedVideosGiveWayToFreshOnes() {
+        let names = videos("n", 20)
+        let watched = Set(names.prefix(6).map(\.id))
+        for seed in 1...10 {
+            let result = batch(names: names, looks: [], fresh: [], weight: { watched.contains($0.id) ? 0 : 1 }, seed: UInt64(seed))
+            XCTAssertTrue(result.allSatisfy { !watched.contains($0.id) }, "seed \(seed)")
+        }
+    }
+
+    /// Show more continues past what's shown, and a dry pool is topped up from the others.
+    func testBatchesContinueAndTopUp() {
+        let names = videos("n", 3), fresh = videos("f", 10)
+        let first = batch(names: names, looks: [], fresh: fresh)
+        XCTAssertEqual(first.count, 7)
+        XCTAssertEqual(first.filter { $0.key.hasPrefix("n") }.count, 3)
+        let second = batch(names: names, looks: [], fresh: fresh, excluding: Set(first.map(\.id)))
+        XCTAssertEqual(second.count, 6)
+        XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: second.map(\.id)))
+    }
+}
+
+// MARK: - Subtitles
+
+final class SubtitleTests: XCTestCase {
+    func testSubtitleShowsTheCurrentSentence() {
+        XCTAssertEqual(LiveCaptions.subtitleTail("Hello there. How are you"), "How are you")
+        XCTAssertEqual(LiveCaptions.subtitleTail("Hello there. How are you?"), "How are you?")
+        XCTAssertEqual(LiveCaptions.subtitleTail("こんにちは。元気ですか"), "元気ですか")
+    }
+
+    func testLongSubtitleIsCutAtAWord() {
+        let long = String(repeating: "word ", count: 40) + "end"
+        let tail = LiveCaptions.subtitleTail(long, maxLength: 30)
+        XCTAssertLessThanOrEqual(tail.count, 30)
+        XCTAssertTrue(tail.hasPrefix("word"))
+        XCTAssertTrue(tail.hasSuffix("end"))
+    }
+
+    /// Audio tracks tag languages in ISO 639-2; "und" means untagged.
+    func testTrackLanguageTags() {
+        XCTAssertEqual(LiveCaptions.language(fromTrackCode: "jpn")?.languageCode?.identifier, "ja")
+        XCTAssertEqual(LiveCaptions.language(fromTrackCode: "eng")?.languageCode?.identifier, "en")
+        XCTAssertNil(LiveCaptions.language(fromTrackCode: "und"))
+    }
+}
+
 // MARK: - Background playback and Picture in Picture
 
 @MainActor

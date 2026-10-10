@@ -5,8 +5,11 @@ import Foundation
 enum PlayCountStore {
     private static let key = "playCounts"
 
-    static func count(for id: String) -> Int {
-        (UserDefaults.standard.dictionary(forKey: key) as? [String: Int])?[id] ?? 0
+    static func count(for id: String) -> Int { counts()[id] ?? 0 }
+
+    /// Every video's play count, for checking many at once.
+    static func counts() -> [String: Int] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
     }
 
     static func increment(_ id: String) {

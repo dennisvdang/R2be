@@ -11,6 +11,7 @@ import UIKit
 final class PlayerController {
     let player = AVPlayer()
     let pip = PiPManager()
+    let captions = LiveCaptions()
 
     private(set) var queue: [VideoItem] = []
     /// Play order as indices into `queue`. Shuffle just permutes this; Up Next reads from it.
@@ -132,15 +133,101 @@ final class PlayerController {
         guard order.indices.contains(position), queue.indices.contains(order[position]) else { return nil }
         return queue[order[position]]
     }
-    /// Positions in `order` that will play after the current one, in play order. With loop on this
-    /// wraps around, so starting on the last video still lists everything before it.
-    private var upNextPositions: [Int] {
-        guard order.indices.contains(position) else { return [] }
-        let after = Array((position + 1)..<order.count)
-        return loopQueue ? after + Array(0..<position) : after
+    var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) || !related.isEmpty }
+
+    // MARK: - Related (plays next once the queue runs out)
+
+    /// Related videos for the current one, revealed 7 at a time (see `relatedBatch`).
+    private(set) var related: [VideoItem] = []
+    var canShowMoreRelated: Bool {
+        let shown = Set(related.map(\.id))
+        return (namePool + lookPool + freshPool).contains { !shown.contains($0.id) && $0 != current }
     }
-    var upNext: [VideoItem] { upNextPositions.map { queue[order[$0]] } }
-    var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) }
+    @ObservationIgnored private var namePool: [VideoItem] = []
+    @ObservationIgnored private var lookPool: [VideoItem] = []
+    @ObservationIgnored private var freshPool: [VideoItem] = []
+    @ObservationIgnored private var nextPart: VideoItem?
+    @ObservationIgnored private var relatedFor: String?
+
+    /// Videos shown in Related this session, oldest first; they're less likely to come back.
+    @ObservationIgnored private var recentlyShown: [String] = []
+
+    func showMoreRelated() {
+        var shown = Set(related.map(\.id))
+        if let current { shown.insert(current.id) }
+        let plays = PlayCountStore.counts()
+        let seen = Set(recentlyShown)
+        var rng = SystemRandomNumberGenerator()
+        let batch = Self.relatedBatch(
+            names: namePool, looks: lookPool, fresh: freshPool,
+            pinned: related.isEmpty ? nextPart : nil, excluding: shown,
+            weight: { v in ((plays[v.id] ?? 0) > 0 ? 0.35 : 1) * (seen.contains(v.id) ? 0.3 : 1) },
+            using: &rng)
+        related += batch
+        recentlyShown = Array((recentlyShown + batch.map(\.id)).suffix(300))
+    }
+
+    /// One batch of Related: `byName` name matches with the next series part pinned first, then
+    /// `byFresh` new uploads from other folders and `byLook` look-alikes at random spots. Each pick
+    /// is drawn from a window of the strongest remaining candidates, weighted by rank and by
+    /// `weight` (lower for videos already played or already shown), so a video gets a different
+    /// batch each visit instead of the same top matches. A pool that runs dry is topped up from the others.
+    nonisolated static func relatedBatch<R: RandomNumberGenerator>(
+        names: [VideoItem], looks: [VideoItem], fresh: [VideoItem], pinned: VideoItem? = nil,
+        excluding shown: Set<String>, weight: (VideoItem) -> Double = { _ in 1 },
+        byName: Int = 4, byFresh: Int = 1, byLook: Int = 2, using rng: inout R
+    ) -> [VideoItem] {
+        var taken = shown
+        func draw(_ pool: [VideoItem], _ n: Int, window: Int) -> [VideoItem] {
+            var candidates = Array(pool.filter { !taken.contains($0.id) }.prefix(max(window, n)))
+            var out: [VideoItem] = []
+            while out.count < n, !candidates.isEmpty {
+                let weights = candidates.enumerated().map { i, v in weight(v) / Double(i + 1) }
+                let total = weights.reduce(0, +)
+
+                // With every weight at zero, fall back to the strongest match.
+                var pick = 0
+                if total > 0 {
+                    var r = Double.random(in: 0..<total, using: &rng)
+                    pick = weights.firstIndex { r -= $0; return r < 0 } ?? candidates.count - 1
+                }
+                let v = candidates.remove(at: pick)
+                taken.insert(v.id)
+                out.append(v)
+            }
+            return out
+        }
+
+        var batch: [VideoItem] = []
+        if let pinned, taken.insert(pinned.id).inserted { batch.append(pinned) }
+        batch += draw(names, byName - batch.count, window: 3 * byName)
+        var extras = draw(fresh, byFresh, window: 40) + draw(looks, byLook, window: 4 * byLook)
+        let target = byName + byFresh + byLook
+        batch += draw(names, target - batch.count - extras.count, window: 3 * byName)
+        extras += draw(looks, target - batch.count - extras.count, window: 4 * byLook)
+        extras += draw(fresh, target - batch.count - extras.count, window: 40)
+
+        let first = pinned != nil && batch.first == pinned ? 1 : 0
+        for v in extras { batch.insert(v, at: Int.random(in: first...batch.count, using: &rng)) }
+        return batch
+    }
+
+    private func refreshRelated() {
+        guard let item = current, let library, relatedFor != item.id else { return }
+        relatedFor = item.id
+        related = []
+        namePool = library.relatedPool(for: item)
+        freshPool = library.freshPool(for: item)
+        nextPart = library.nextPart(after: item)
+        lookPool = []
+        let videos = library.allVideos
+        Task {
+            let looks = await ThumbnailService.shared.lookalikes(of: item, among: videos)
+            guard relatedFor == item.id else { return }
+            lookPool = looks
+            showMoreRelated()
+        }
+    }
 
     // MARK: - Starting playback
 
@@ -205,18 +292,6 @@ final class PlayerController {
         if let i = queue.firstIndex(of: item) { return i }
         queue.append(item)
         return queue.count - 1
-    }
-
-    func removeFromUpNext(at offsets: IndexSet) {
-        let positions = upNextPositions
-        let absolute = IndexSet(offsets.compactMap { positions.indices.contains($0) ? positions[$0] : nil })
-        position -= absolute.count(in: 0..<position)
-        order.remove(atOffsets: absolute)
-    }
-
-    func reshuffle() {
-        guard !order.isEmpty else { return }
-        rebuildOrder(keepCurrent: true, forceShuffle: true)
     }
 
     // MARK: - Sleep timer
@@ -351,8 +426,12 @@ final class PlayerController {
         if position + 1 < order.count {
             position += 1
         } else if loopQueue, !order.isEmpty {
-            // Keep the same order so what plays matches what Up Next showed. Reshuffle is in Up Next.
             position = 0
+        } else if let upcoming = related.first {
+
+            // The queue ran out: carry on with the top related video.
+            playNext(upcoming)
+            position += 1
         } else {
             return false
         }
@@ -371,7 +450,9 @@ final class PlayerController {
         saveResume(force: true)
         player.pause()
         player.replaceCurrentItem(with: nil)
+        captions.detach()
         queue = []; order = []; position = 0
+        related = []; namePool = []; lookPool = []; freshPool = []; nextPart = nil; relatedFor = nil
         streamCache?.invalidate()
         streamCache = nil
         cancelSleepTimer()
@@ -432,6 +513,7 @@ final class PlayerController {
 
         let asset = makeAsset(for: item, url: url)
         let playerItem = AVPlayerItem(asset: asset)
+        captions.attach(to: playerItem)
         // Stay up to a minute ahead so short drops in Wi-Fi/cellular speed don't stall playback.
         playerItem.preferredForwardBufferDuration = 60
 
@@ -467,6 +549,7 @@ final class PlayerController {
         player.playImmediately(atRate: rate)
         updateNowPlaying()
         loadArtwork(for: item)
+        refreshRelated()
     }
 
     private func makeAsset(for item: VideoItem, url: URL) -> AVURLAsset {
