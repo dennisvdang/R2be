@@ -1,10 +1,8 @@
 name: Tests
 
-# Unit tests on an iPhone simulator, on every push and pull request, so a change that breaks
-# existing behavior shows up as a red check before it reaches a build you install.
+# Unit tests on an iPhone simulator. Manual only (Actions → Tests → Run workflow), because macOS
+# minutes count 10x against the private-repo allowance; run it before installing a risky build.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
