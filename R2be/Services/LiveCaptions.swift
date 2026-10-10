@@ -277,12 +277,13 @@ enum AudioTap {
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0, clientInfo: context,
             init: tapInit, finalize: tapFinalize, prepare: tapPrepare, unprepare: nil, process: tapProcess)
-        var tap: MTAudioProcessingTap?
-        guard MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap) == noErr else {
+        var tap: Unmanaged<MTAudioProcessingTap>?
+        guard MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap) == noErr,
+              let tap else {
             Unmanaged<TapContext>.fromOpaque(context).release()
             return nil
         }
-        return tap
+        return tap.takeRetainedValue()
     }
 }
 
