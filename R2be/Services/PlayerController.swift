@@ -11,7 +11,6 @@ import UIKit
 final class PlayerController {
     let player = AVPlayer()
     let pip = PiPManager()
-    let captions = LiveCaptions()
 
     private(set) var queue: [VideoItem] = []
     /// Play order as indices into `queue`. Shuffle just permutes this; Up Next reads from it.
@@ -450,7 +449,6 @@ final class PlayerController {
         saveResume(force: true)
         player.pause()
         player.replaceCurrentItem(with: nil)
-        captions.detach()
         queue = []; order = []; position = 0
         related = []; namePool = []; lookPool = []; freshPool = []; nextPart = nil; relatedFor = nil
         streamCache?.invalidate()
@@ -513,7 +511,6 @@ final class PlayerController {
 
         let asset = makeAsset(for: item, url: url)
         let playerItem = AVPlayerItem(asset: asset)
-        captions.attach(to: playerItem)
         // Stay up to a minute ahead so short drops in Wi-Fi/cellular speed don't stall playback.
         playerItem.preferredForwardBufferDuration = 60
 

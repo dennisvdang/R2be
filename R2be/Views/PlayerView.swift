@@ -42,7 +42,6 @@ struct PlayerView: View {
             .statusBarHidden(landscape)
         }
         .persistentSystemOverlays(.hidden)
-        .modifier(TranslatedCaptions(captions: player.captions))
 
         // A sideways drag along the bottom edge would otherwise switch apps instead of scrubbing.
         .defersSystemGestures(on: .bottom)
@@ -88,26 +87,6 @@ struct PlayerView: View {
                 ControlsOverlay(landscape: landscape, fill: $fill, scrubFraction: $scrubFraction,
                                 onInteract: { scheduleHide() })
                     .transition(.opacity)
-            }
-
-            // Subtitles sit above the controls while they show, near the bottom edge otherwise.
-            if player.captions.isOn {
-                let text = player.captions.line.isEmpty ? (player.captions.status ?? "") : player.captions.line
-                if !text.isEmpty {
-                    VStack {
-                        Spacer()
-                        Text(text)
-                            .font(player.captions.line.isEmpty ? .footnote : .callout.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, controlsVisible ? 88 : 16)
-                    }
-                    .allowsHitTesting(false)
-                    .animation(.easeOut(duration: 0.2), value: controlsVisible)
-                }
             }
 
             if let err = player.errorMessage {
@@ -348,23 +327,6 @@ private struct PlayerSettingsMenu<MenuLabel: View>: View {
             if landscape {
                 Toggle(isOn: $fill) { Label("Zoom to fill", systemImage: "aspectratio") }
             }
-            Section("Subtitles") {
-                Toggle(isOn: Binding(get: { player.captions.isOn }, set: { player.captions.isOn = $0 })) {
-                    Label("Translated subtitles", systemImage: "captions.bubble")
-                }
-                if player.captions.isOn {
-                    Picker(selection: Binding(get: { player.captions.spokenOverride }, set: { player.captions.spokenOverride = $0 })) {
-                        Text("Auto" + (player.captions.detectedLanguage.map { " (\(LiveCaptions.name(of: $0)))" } ?? ""))
-                            .tag(Locale.Language?.none)
-                        ForEach(LiveCaptions.commonLanguages, id: \.self) { lang in
-                            Text(LiveCaptions.name(of: lang)).tag(Optional(lang))
-                        }
-                    } label: {
-                        Label("Spoken language", systemImage: "waveform")
-                    }
-                    .pickerStyle(.menu)
-                }
-            }
             if PiPManager.isSupported {
                 Button { player.pip.toggle() } label: {
                     Label(player.pip.isActive ? "Stop Picture in Picture" : "Picture in Picture", systemImage: "pip.enter")
@@ -384,7 +346,7 @@ private struct PlayerSettingsMenu<MenuLabel: View>: View {
     }
 }
 
-// MARK: - Info + Up Next (portrait)
+// MARK: - Info + Related (portrait)
 
 private struct PlayerInfoPanel: View {
     @Binding var pendingAdd: PendingPlaylistAdd?

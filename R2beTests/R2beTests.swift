@@ -271,31 +271,6 @@ final class RelatedBatchTests: XCTestCase {
     }
 }
 
-// MARK: - Subtitles
-
-final class SubtitleTests: XCTestCase {
-    func testSubtitleShowsTheCurrentSentence() {
-        XCTAssertEqual(LiveCaptions.subtitleTail("Hello there. How are you"), "How are you")
-        XCTAssertEqual(LiveCaptions.subtitleTail("Hello there. How are you?"), "How are you?")
-        XCTAssertEqual(LiveCaptions.subtitleTail("こんにちは。元気ですか"), "元気ですか")
-    }
-
-    func testLongSubtitleIsCutAtAWord() {
-        let long = String(repeating: "word ", count: 40) + "end"
-        let tail = LiveCaptions.subtitleTail(long, maxLength: 30)
-        XCTAssertLessThanOrEqual(tail.count, 30)
-        XCTAssertTrue(tail.hasPrefix("word"))
-        XCTAssertTrue(tail.hasSuffix("end"))
-    }
-
-    /// Audio tracks tag languages in ISO 639-2; "und" means untagged.
-    func testTrackLanguageTags() {
-        XCTAssertEqual(LiveCaptions.language(fromTrackCode: "jpn")?.languageCode?.identifier, "ja")
-        XCTAssertEqual(LiveCaptions.language(fromTrackCode: "eng")?.languageCode?.identifier, "en")
-        XCTAssertNil(LiveCaptions.language(fromTrackCode: "und"))
-    }
-}
-
 // MARK: - Background playback and Picture in Picture
 
 @MainActor
