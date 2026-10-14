@@ -259,6 +259,12 @@ final class StreamCache: NSObject, AVAssetResourceLoaderDelegate, URLSessionData
     }
 
     private func insert(_ new: Range<Int64>) {
+        ranges = Self.merging(new, into: ranges)
+        cachedBytes = ranges.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
+    }
+
+    /// `ranges` with `new` added, sorted, with overlapping and touching ranges joined.
+    static func merging(_ new: Range<Int64>, into ranges: [Range<Int64>]) -> [Range<Int64>] {
         var merged = new
         var kept: [Range<Int64>] = []
         for r in ranges {
@@ -269,7 +275,6 @@ final class StreamCache: NSObject, AVAssetResourceLoaderDelegate, URLSessionData
             }
         }
         kept.append(merged)
-        ranges = kept.sorted { $0.lowerBound < $1.lowerBound }
-        cachedBytes = ranges.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
+        return kept.sorted { $0.lowerBound < $1.lowerBound }
     }
 }

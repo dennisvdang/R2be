@@ -16,16 +16,6 @@ struct PlaylistsView: View {
 
     var body: some View {
         List {
-            if store.playlists.isEmpty {
-                ContentUnavailableView {
-                    Label("No playlists yet", systemImage: "music.note.list")
-                } description: {
-                    Text("Tap ☑︎ in the Library to pick videos, or long-press a video → Add to Playlist. Nothing in R2 is changed.")
-                } actions: {
-                    Button("New Playlist") { creating = true }.buttonStyle(.borderedProminent)
-                }
-                .listRowBackground(Color.clear)
-            }
             ForEach(store.playlists) { p in
                 let videos = library.resolve(p)
                 if mergeMode {
@@ -207,7 +197,8 @@ struct PlaylistDetailView: View {
     }
 
     private func videosTab(_ p: Playlist) -> some View {
-        ScrollView {
+        let videos = self.videos
+        return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     PillButton(title: "Play", systemImage: "play.fill", prominent: true) {
@@ -223,7 +214,7 @@ struct PlaylistDetailView: View {
                 VideoGallery(videos: videos,
                              layout: GalleryLayout(rawValue: layoutRaw) ?? .grid,
                              showFolderPath: true,
-                             onPlay: { v in player.play(videos, startAt: v, title: p.name) },
+                             onPlay: { v in player.play(videos, startAt: v, shuffle: false, title: p.name) },
                              onAddToPlaylist: { pendingAdd = PendingPlaylistAdd(entries: $0) })
 
                 if videos.isEmpty && query.isEmpty {
@@ -355,7 +346,7 @@ private struct VideoPickerLevel: View {
                                 Image(systemName: "folder.fill").foregroundStyle(.yellow)
                                 Text(f.name).lineLimit(1)
                                 Spacer()
-                                let n = library.videos(under: f.prefix, recursive: true).filter { picked.contains($0.id) }.count
+                                let n = picked.filter { $0.hasPrefix(library.activeBucket + "/" + f.prefix) }.count
                                 if n > 0 { Text("\(n) picked").font(.caption).foregroundStyle(.red) }
                                 Text("\(f.videoCount)").font(.caption).foregroundStyle(.secondary)
                             }

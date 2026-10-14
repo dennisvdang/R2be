@@ -394,7 +394,19 @@ private struct PlayerInfoPanel: View {
                 }
             }
 
-            // Related replaces Up Next: once the queue runs out, Next and autoplay play the top one.
+            if !player.upNext.isEmpty {
+                Section {
+                    ForEach(player.upNext) { v in
+                        Button { player.jump(to: v) } label: { videoRow(v) }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.black)
+                    }
+                } header: {
+                    Text("Up next").font(.subheadline.weight(.semibold)).foregroundStyle(.white).textCase(nil)
+                }
+            }
+
+            // Once the queue runs out, Next and autoplay play the top Related video.
             Section {
                 ForEach(player.related) { v in
                     Button { player.playNow(v) } label: { videoRow(v) }
@@ -511,6 +523,7 @@ enum Orientation {
     private static func exitWhenTurnedUpright() {
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         sawLandscape = UIDevice.current.orientation.isLandscape
+        stopWatchingRotation()
         rotationObserver = NotificationCenter.default.addObserver(
             forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {

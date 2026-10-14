@@ -3,7 +3,7 @@ import Foundation
 /// Generic flat XML walker: records element paths and text so the specific parsers stay tiny.
 private final class XMLWalker: NSObject, XMLParserDelegate {
     var onStart: ((String) -> Void)?
-    var onEnd: ((String, String) -> Void)?   // element name, trimmed text
+    var onEnd: ((String, String) -> Void)?   // element name, text as sent
     private var text = ""
 
     func run(_ data: Data) -> Bool {
@@ -21,7 +21,7 @@ private final class XMLWalker: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, foundCharacters string: String) { text += string }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
-        onEnd?(elementName, text.trimmingCharacters(in: .whitespacesAndNewlines))
+        onEnd?(elementName, text)
         text = ""
     }
 }
@@ -46,14 +46,17 @@ enum ListObjectsParser {
             if name == "Contents" { current = R2Object(key: "", size: 0, lastModified: nil, etag: "") }
             if name == "CommonPrefixes" { inPrefixes = true }
         }
-        w.onEnd = { name, text in
+        w.onEnd = { name, raw in
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             switch name {
-            case "Key": current?.key = text
+
+            // Object names keep their spaces: "Movies/ intro.mp4" is a different key from "Movies/intro.mp4".
+            case "Key": current?.key = raw
             case "Size": current?.size = Int64(text) ?? 0
             case "LastModified": current?.lastModified = S3Date.parse(text)
             case "ETag": current?.etag = text.replacingOccurrences(of: "\"", with: "")
             case "Contents": if let c = current { page.objects.append(c) }; current = nil
-            case "Prefix" where inPrefixes: page.commonPrefixes.append(text)
+            case "Prefix" where inPrefixes: page.commonPrefixes.append(raw)
             case "CommonPrefixes": inPrefixes = false
             case "IsTruncated": page.isTruncated = (text == "true")
             case "NextContinuationToken": page.nextContinuationToken = text
@@ -71,7 +74,7 @@ enum BucketListParser {
         let w = XMLWalker()
         w.onStart = { if $0 == "Bucket" { inBucket = true } }
         w.onEnd = { name, text in
-            if name == "Name", inBucket { names.append(text) }
+            if name == "Name", inBucket { names.append(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
             if name == "Bucket" { inBucket = false }
         }
         _ = w.run(data)
@@ -83,7 +86,7 @@ enum S3ErrorParser {
     static func code(in body: String) -> String? {
         var code: String?
         let w = XMLWalker()
-        w.onEnd = { name, text in if name == "Code" { code = text } }
+        w.onEnd = { name, text in if name == "Code" { code = text.trimmingCharacters(in: .whitespacesAndNewlines) } }
         _ = w.run(Data(body.utf8))
         return code
     }

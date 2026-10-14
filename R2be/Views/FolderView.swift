@@ -40,6 +40,7 @@ struct FolderView: View {
     private var allVideosHere: [VideoItem] { library.videos(under: prefix, recursive: true) }
 
     var body: some View {
+        let videos = visibleVideos
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if library.isIndexing && library.allVideos.isEmpty {
@@ -51,13 +52,13 @@ struct FolderView: View {
                 if !isSearching { header }
 
                 if isSearching {
-                    Text("\(visibleVideos.count) result\(visibleVideos.count == 1 ? "" : "s")")
+                    Text("\(videos.count) result\(videos.count == 1 ? "" : "s")")
                         .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
                 }
 
                 VideoGallery(
                     folders: isSearching || flatten || !showFolders ? [] : contents.subfolders,
-                    videos: visibleVideos,
+                    videos: videos,
                     layout: layout,
                     showFolderPath: isSearching,
                     selection: selectionBinding,
@@ -66,7 +67,7 @@ struct FolderView: View {
 
                 if !isSearching && contents.subfolders.isEmpty && contents.videos.isEmpty && !library.isIndexing {
                     ContentUnavailableView("No videos here", systemImage: "film.stack",
-                                           description: Text("Supported: MP4, MOV, M4V, 3GP, HLS (.m3u8), MP3, M4A, FLAC, WAV."))
+                                           description: Text("Supported: MP4, MOV, M4V, 3GP, MP3, M4A, FLAC, WAV."))
                         .padding(.top, 40)
                 }
             }
@@ -85,7 +86,7 @@ struct FolderView: View {
         .onAppear { if !isRoot { scope = .folder } }
         .refreshable { await library.refreshAndWait() }
         .toolbar { toolbar }
-        .safeAreaInset(edge: .bottom) { if selection != nil { selectionBar } }
+        .safeAreaInset(edge: .bottom) { if selection != nil { selectionBar(visible: videos) } }
         .sheet(item: $pendingAdd) { AddToPlaylistSheet(pending: $0) }
     }
 
@@ -182,29 +183,27 @@ struct FolderView: View {
         guard let selection, !selection.isEmpty else { return [] }
         return library.allVideos.filter { selection.contains($0.id) }
     }
-    private var allVisibleSelected: Bool {
-        guard let selection, !visibleVideos.isEmpty else { return false }
-        return visibleVideos.allSatisfy { selection.contains($0.id) }
-    }
 
-    private var selectionBar: some View {
-        HStack(spacing: 10) {
+    private func selectionBar(visible: [VideoItem]) -> some View {
+        let picked = selectedVideos
+        let allVisibleSelected = !visible.isEmpty && visible.allSatisfy { selection?.contains($0.id) ?? false }
+        return HStack(spacing: 10) {
             Button(allVisibleSelected ? "None" : "All") {
-                let ids = Set(visibleVideos.map(\.id))
+                let ids = Set(visible.map(\.id))
                 selection = allVisibleSelected ? (selection ?? []).subtracting(ids) : (selection ?? []).union(ids)
             }
             .frame(width: 50)
-            PillButton(title: "Add \(selectedVideos.count) to Playlist", systemImage: "text.badge.plus", prominent: true) {
-                pendingAdd = PendingPlaylistAdd(entries: selectedVideos.map { .video(bucket: $0.bucket, key: $0.key) })
+            PillButton(title: "Add \(picked.count) to Playlist", systemImage: "text.badge.plus", prominent: true) {
+                pendingAdd = PendingPlaylistAdd(entries: picked.map { .video(bucket: $0.bucket, key: $0.key) })
                 selection = nil
             }
-            .disabled(selectedVideos.isEmpty)
-            iconButton("arrow.down.circle", "Download selected") {
-                library.download(selectedVideos)
+            .disabled(picked.isEmpty)
+            iconButton("arrow.down.circle", "Download selected", disabled: picked.isEmpty) {
+                library.download(picked)
                 selection = nil
             }
-            iconButton("play.fill", "Play selected") {
-                player.play(selectedVideos, title: "Selection")
+            iconButton("play.fill", "Play selected", disabled: picked.isEmpty) {
+                player.play(picked, title: "Selection")
                 selection = nil
             }
         }
@@ -212,7 +211,7 @@ struct FolderView: View {
         .background(.ultraThinMaterial)
     }
 
-    private func iconButton(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ symbol: String, _ label: String, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.body.weight(.semibold))
                 .frame(width: 40, height: 40)
@@ -220,11 +219,11 @@ struct FolderView: View {
                 .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
-        .disabled(selectedVideos.isEmpty)
+        .disabled(disabled)
         .accessibilityLabel(label)
     }
 
     private func play(_ item: VideoItem) {
-        player.play(visibleVideos, startAt: item, title: isSearching ? "Search: \(query)" : title)
+        player.play(visibleVideos, startAt: item, shuffle: false, title: isSearching ? "Search: \(query)" : title)
     }
 }

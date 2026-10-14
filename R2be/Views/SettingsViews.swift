@@ -56,7 +56,11 @@ struct SetupView: View {
     /// The folder browser's ticks, mapped onto the typed folder rows.
     private var browsedFolders: Binding<[String]> {
         Binding(get: { draft.prefixes.filter { !$0.isEmpty } },
-                set: { folders = $0.map { FolderField(path: String($0.dropLast())) } })
+                set: { ticked in
+                    // Drop a folder typed into the Bucket field; if it's still ticked, it comes back as a row.
+                    bucket = draft.bucket
+                    folders = ticked.map { FolderField(path: String($0.dropLast())) }
+                })
     }
 
     var body: some View {

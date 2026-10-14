@@ -10,6 +10,9 @@ actor ThumbnailService {
 
     private let memory = NSCache<NSString, UIImage>()
     private var inflight: [String: Task<UIImage?, Never>] = [:]
+    /// Files that opened but had no frame to show (audio, or video the phone can't decode), so they
+    /// aren't fetched again this session. Network failures aren't kept here; they retry.
+    private var noFrame: Set<String> = []
     private let limiter = AsyncLimiter(limit: 3)
     private let dir: URL
 
@@ -44,6 +47,7 @@ actor ThumbnailService {
             return img
         }
         if let task = inflight[key] { return await task.value }
+        if noFrame.contains(key) { return nil }
 
         let task = Task<UIImage?, Never> { [limiter] in
             await limiter.acquire()
@@ -51,10 +55,14 @@ actor ThumbnailService {
             if Task.isCancelled { return nil }
             if let sidecarURL, let img = await Self.download(sidecarURL) { return img }
             guard let videoURL else { return nil }
-            return await Self.grabFrame(url: videoURL, id: item.id)
+            let (frame, opened) = await Self.grabFrame(url: videoURL, id: item.id)
+            if frame == nil, opened { await self.markNoFrame(key) }
+            return frame
         }
         inflight[key] = task
-        let image = await task.value
+
+        // A tile scrolled off screen cancels its request, so it stops holding a download slot.
+        let image = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         inflight[key] = nil
         if let image {
             memory.setObject(image, forKey: key as NSString)
@@ -63,6 +71,8 @@ actor ThumbnailService {
         }
         return image
     }
+
+    private func markNoFrame(_ key: String) { noFrame.insert(key) }
 
     // MARK: Looks similar
 
@@ -80,18 +90,23 @@ actor ThumbnailService {
         return scored.sorted { $0.distance < $1.distance }.map(\.video)
     }
 
+    /// Vision runs in its own task, so it doesn't hold up the thumbnail requests queued behind it.
     private func ensurePrint(of image: UIImage, key: String) {
         let file = dir.appendingPathComponent(key + ".print")
         guard prints[key] == nil, !FileManager.default.fileExists(atPath: file.path),
               let cg = image.cgImage else { return }
-        let request = VNGenerateImageFeaturePrintRequest()
-        try? VNImageRequestHandler(cgImage: cg).perform([request])
-        guard let print = request.results?.first else { return }
-        prints[key] = print
-        if let data = try? NSKeyedArchiver.archivedData(withRootObject: print, requiringSecureCoding: true) {
-            try? data.write(to: file, options: .atomic)
+        Task.detached(priority: .utility) {
+            let request = VNGenerateImageFeaturePrintRequest()
+            try? VNImageRequestHandler(cgImage: cg).perform([request])
+            guard let print = request.results?.first else { return }
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: print, requiringSecureCoding: true) {
+                try? data.write(to: file, options: .atomic)
+            }
+            await self.store(print, key: key)
         }
     }
+
+    private func store(_ print: VNFeaturePrintObservation, key: String) { prints[key] = print }
 
     private func loadPrintsIfNeeded() {
         guard !printsLoaded else { return }
@@ -108,6 +123,7 @@ actor ThumbnailService {
 
     func clearCache() {
         memory.removeAllObjects()
+        noFrame = []
         prints = [:]
         printsLoaded = false
         try? FileManager.default.removeItem(at: dir)
@@ -121,10 +137,12 @@ actor ThumbnailService {
         return img.preparingThumbnail(of: CGSize(width: 640, height: 360)) ?? img
     }
 
-    private static func grabFrame(url: URL, id: String) async -> UIImage? {
+    /// A poster frame, and whether the file opened at all (false after a network error).
+    private static func grabFrame(url: URL, id: String) async -> (UIImage?, opened: Bool) {
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
         let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
-        if duration.isFinite, duration > 0 {
+        let opened = duration.isFinite && duration > 0
+        if opened {
             await ResumeStore.setDuration(duration, for: id)
         }
         let gen = AVAssetImageGenerator(asset: asset)
@@ -135,10 +153,10 @@ actor ThumbnailService {
         gen.requestedTimeToleranceAfter = CMTime(seconds: 4, preferredTimescale: 600)
         let at = duration > 0 ? min(max(duration * 0.1, 1), 20) : 1
         if let frame = try? await gen.image(at: CMTime(seconds: at, preferredTimescale: 600)) {
-            return UIImage(cgImage: frame.image)
+            return (UIImage(cgImage: frame.image), opened)
         }
-        if let frame = try? await gen.image(at: .zero) { return UIImage(cgImage: frame.image) }
-        return nil
+        if let frame = try? await gen.image(at: .zero) { return (UIImage(cgImage: frame.image), opened) }
+        return (nil, opened)
     }
 }
 

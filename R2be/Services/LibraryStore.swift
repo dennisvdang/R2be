@@ -45,6 +45,8 @@ final class LibraryStore {
     @ObservationIgnored private var nameIndex: NameIndex?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var otherBucketIndexes: [String: BucketIndex] = [:]
+    /// Bucket → key → video, rebuilt when that bucket's index changes. Playlists look videos up here.
+    @ObservationIgnored private var videosByKey: [String: (builtAt: Date, byKey: [String: VideoItem])] = [:]
 
     /// Pages listed so far by an unfinished refresh. A refresh that dies when the phone locks
     /// picks up from here instead of starting over.
@@ -338,7 +340,11 @@ final class LibraryStore {
     ]
 
     func video(bucket: String, key: String) -> VideoItem? {
-        index(for: bucket)?.videos.first { $0.key == key }
+        guard let index = index(for: bucket) else { return nil }
+        if videosByKey[bucket]?.builtAt != index.builtAt {
+            videosByKey[bucket] = (index.builtAt, Dictionary(index.videos.map { ($0.key, $0) }) { first, _ in first })
+        }
+        return videosByKey[bucket]?.byKey[key]
     }
 
     /// Expands playlist entries into a de-duplicated, ordered list of videos that still exist.

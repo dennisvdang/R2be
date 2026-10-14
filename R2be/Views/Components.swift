@@ -295,19 +295,20 @@ struct FolderMenu: View {
     @Environment(FolderCoverStore.self) private var covers
 
     var body: some View {
+        let videos = library.videos(under: folder.prefix, recursive: true)
+        let entries = videos.map { PlaylistEntry.video(bucket: $0.bucket, key: $0.key) }
         Button {
-            player.play(library.videos(under: folder.prefix, recursive: true), title: folder.name)
+            player.play(videos, title: folder.name)
         } label: { Label("Play All", systemImage: "play.fill") }
         Button {
-            player.shufflePlay(library.videos(under: folder.prefix, recursive: true), title: folder.name)
+            player.shufflePlay(videos, title: folder.name)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
-        let entries = library.videos(under: folder.prefix, recursive: true).map { PlaylistEntry.video(bucket: $0.bucket, key: $0.key) }
         Button {
             onAddToPlaylist(entries)
         } label: { Label("Add All \(folder.videoCount) Videos to Playlist…", systemImage: "text.badge.plus") }
         RecentPlaylistButton(entries: entries)
-        DownloadMenuItems(items: library.videos(under: folder.prefix, recursive: true))
+        DownloadMenuItems(items: videos)
         Divider()
         Button {
             covers.requestPicker(bucket: library.activeBucket, prefix: folder.prefix)

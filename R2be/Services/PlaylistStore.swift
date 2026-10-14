@@ -11,7 +11,13 @@ final class PlaylistStore {
     /// Built-in playlist that always exists, so there's somewhere to save videos from day one.
     static let favoritesID = UUID(uuidString: "00000000-0000-0000-0000-00000000FA7E")!
 
-    init() {
+    private let fileURL: URL
+
+    /// Set when a saved file exists but couldn't be backed up, so nothing saves over it.
+    @ObservationIgnored private var readOnly = false
+
+    init(fileURL: URL = PlaylistStore.defaultFileURL) {
+        self.fileURL = fileURL
         load()
         ensureFavorites()
     }
@@ -37,14 +43,23 @@ final class PlaylistStore {
 
     @discardableResult
     func create(name: String, entries: [PlaylistEntry] = []) -> Playlist {
-        let p = Playlist(name: name.isEmpty ? "New Playlist" : name, entries: Self.dedupe(entries))
+        let p = Playlist(name: Self.cleanName(name) ?? "New Playlist", entries: Self.dedupe(entries))
         playlists.insert(p, at: playlists.first?.id == Self.favoritesID ? 1 : 0)   // Favorites stays on top
         if !entries.isEmpty { markRecent(p.id) }
         save()
         return p
     }
 
-    func rename(_ id: Playlist.ID, to name: String) { mutate(id) { $0.name = name } }
+    func rename(_ id: Playlist.ID, to name: String) {
+        guard let name = Self.cleanName(name) else { return }
+        mutate(id) { $0.name = name }
+    }
+
+    /// The name with surrounding spaces removed; nil when nothing is left.
+    private static func cleanName(_ name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     func delete(_ id: Playlist.ID) {
         guard id != Self.favoritesID else { return }
@@ -100,19 +115,27 @@ final class PlaylistStore {
 
     // MARK: Persistence
 
-    private var fileURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("playlists.json")
+    nonisolated static var defaultFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("playlists.json")
     }
 
+    /// Where an unreadable save file is copied before a fresh list replaces it.
+    var backupURL: URL { fileURL.deletingPathExtension().appendingPathExtension("corrupt.json") }
+
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let list = try? JSONDecoder().decode([Playlist].self, from: data) else { return }
-        playlists = list
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        do {
+            playlists = try JSONDecoder().decode([Playlist].self, from: Data(contentsOf: fileURL))
+        } catch {
+            try? FileManager.default.removeItem(at: backupURL)
+            readOnly = (try? FileManager.default.copyItem(at: fileURL, to: backupURL)) == nil
+        }
     }
 
     private func save() {
+        guard !readOnly else { return }
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(playlists) { try? data.write(to: fileURL, options: .atomic) }
     }
 }

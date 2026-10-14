@@ -134,6 +134,9 @@ final class PlayerController {
     }
     var hasNext: Bool { position + 1 < order.count || (loopQueue && !order.isEmpty) || !related.isEmpty }
 
+    /// The next few videos in play order (the rest of the folder or playlist), shown above Related.
+    var upNext: [VideoItem] { order.dropFirst(position + 1).prefix(5).map { queue[$0] } }
+
     // MARK: - Related (plays next once the queue runs out)
 
     /// Related videos for the current one, revealed 7 at a time (see `relatedBatch`).
@@ -503,6 +506,7 @@ final class PlayerController {
         linkCreated = Date()
         if !isRetry {
             retriedExpiredLink = false
+            bypassCacheFor = nil
             PlayCountStore.increment(item.id)
         }
         errorMessage = nil
@@ -551,7 +555,7 @@ final class PlayerController {
 
     private func makeAsset(for item: VideoItem, url: URL) -> AVURLAsset {
         let enabled = UserDefaults.standard.object(forKey: "rewindCache") as? Bool ?? true
-        let usable = enabled && !url.isFileURL && url.pathExtension.lowercased() != "m3u8"
+        let usable = enabled && !url.isFileURL
             && bypassCacheFor != item.id && !player.isExternalPlaybackActive   // AirPlay needs the real URL
         guard usable else {
             streamCache?.invalidate()

@@ -33,7 +33,7 @@ struct DownloadsView: View {
                     ForEach(inProgress) { row in
                         HStack(spacing: 10) {
                             ProgressView(value: row.fraction).frame(width: 80)
-                            Text(Self.title(fromID: row.id)).font(.subheadline).lineLimit(1)
+                            Text(VideoItem.title(fromPath: row.id)).font(.subheadline).lineLimit(1)
                             Spacer()
                             Text("\(Int(row.fraction * 100))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         }
@@ -45,7 +45,7 @@ struct DownloadsView: View {
                 Section("Failed") {
                     ForEach(failures) { f in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(Self.title(fromID: f.id)).font(.subheadline).lineLimit(1)
+                            Text(VideoItem.title(fromPath: f.id)).font(.subheadline).lineLimit(1)
                             Text(f.message).font(.caption).foregroundStyle(.red).lineLimit(2)
                         }
                     }
@@ -67,7 +67,7 @@ struct DownloadsView: View {
 
                     ForEach(store.sortedEntries) { e in
                         Button {
-                            player.play(downloaded, startAt: e.item, title: "Downloads")
+                            player.play(downloaded, startAt: e.item, shuffle: false, title: "Downloads")
                         } label: {
                             HStack(spacing: 10) {
                                 ThumbnailView(item: e.item).frame(width: 112).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -102,13 +102,6 @@ struct DownloadsView: View {
                             titleVisibility: .visible) {
             Button("Remove all", role: .destructive) { store.removeAll() }
         }
-    }
-
-    /// VideoItem.id is "bucket/key"; show the file's title.
-    private static func title(fromID id: String) -> String {
-        let name = id.split(separator: "/").last.map(String.init) ?? id
-        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return name }
-        return String(name[..<dot])
     }
 }
 

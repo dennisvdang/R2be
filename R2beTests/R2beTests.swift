@@ -91,6 +91,14 @@ final class S3ParserTests: XCTestCase {
         XCTAssertEqual(page.commonPrefixes, ["shows/season 1/", "shows/season 2/"])
     }
 
+    /// A file under a folder named "Movies/" with a space before its name must keep that space, or it 404s.
+    func testKeysKeepSpacesAtTheirEnds() throws {
+        let xml = "<ListBucketResult><Contents><Key>Movies/ intro.mp4 </Key><Size> 5 </Size></Contents></ListBucketResult>"
+        let page = try XCTUnwrap(ListObjectsParser.parse(Data(xml.utf8)))
+        XCTAssertEqual(page.objects.first?.key, "Movies/ intro.mp4 ")
+        XCTAssertEqual(page.objects.first?.size, 5)
+    }
+
     func testBucketListAndErrorCode() {
         let buckets = "<ListAllMyBucketsResult><Buckets><Bucket><Name>one</Name></Bucket><Bucket><Name>two</Name></Bucket></Buckets></ListAllMyBucketsResult>"
         XCTAssertEqual(BucketListParser.parse(Data(buckets.utf8)), ["one", "two"])
@@ -135,7 +143,7 @@ final class IndexTests: XCTestCase {
 
     func testIndexKeepsPlayableMediaAndSidecarImagesOnly() {
         let keys = ["a/", "a/.DS_Store", ".hidden/x.mp4", "a/._clip.mp4", "a/clip.mp4", "a/clip.jpg",
-                    "b/song.mp3", "c/movie.mkv", "d/notes.txt"]
+                    "b/song.mp3", "c/movie.mkv", "d/notes.txt", "e/stream.m3u8"]
         let index = LibraryStore.buildIndex(bucket: "b", objects: keys.map(object))
         XCTAssertEqual(index.videos.map(\.key), ["a/clip.mp4", "b/song.mp3"])
         XCTAssertEqual(index.imageKeys, ["a/clip.jpg"])
@@ -168,6 +176,58 @@ final class IndexTests: XCTestCase {
         let item = VideoItem(bucket: "b", key: "Shows/My-Clip_Final.mp4", size: 1, lastModified: nil, etag: "e")
         XCTAssertTrue(SearchMatcher.matches(item, tokens: SearchMatcher.tokens("my clip final")))
         XCTAssertFalse(SearchMatcher.matches(item, tokens: SearchMatcher.tokens("trailer")))
+    }
+}
+
+// MARK: - Playlists
+
+@MainActor
+final class PlaylistStoreTests: XCTestCase {
+    private func tempFile() -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir.appendingPathComponent("playlists.json")
+    }
+
+    func testPlaylistsSurviveARelaunch() {
+        let file = tempFile()
+        let first = PlaylistStore(fileURL: file)
+        let p = first.create(name: "Trips", entries: [.video(bucket: "b", key: "a.mp4")])
+        let reloaded = PlaylistStore(fileURL: file)
+        XCTAssertEqual(reloaded.playlist(p.id)?.entries, [.video(bucket: "b", key: "a.mp4")])
+        XCTAssertEqual(reloaded.playlists.first?.id, PlaylistStore.favoritesID)
+    }
+
+    /// A save file the app can't read (say, from a newer build) is kept aside, never silently replaced.
+    func testUnreadableSaveFileIsBackedUp() throws {
+        let file = tempFile()
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data(#"[{"unexpected": true}]"#.utf8)
+        try original.write(to: file)
+        let store = PlaylistStore(fileURL: file)
+        XCTAssertEqual(try Data(contentsOf: store.backupURL), original)
+        XCTAssertEqual(store.playlists.map(\.id), [PlaylistStore.favoritesID])
+    }
+
+    func testBlankNamesAreRejected() {
+        let store = PlaylistStore(fileURL: tempFile())
+        let p = store.create(name: "   ")
+        XCTAssertEqual(p.name, "New Playlist")
+        store.rename(p.id, to: "  ")
+        XCTAssertEqual(store.playlist(p.id)?.name, "New Playlist")
+        store.rename(p.id, to: " Road trip ")
+        XCTAssertEqual(store.playlist(p.id)?.name, "Road trip")
+    }
+}
+
+// MARK: - Rewind cache
+
+final class StreamCacheRangeTests: XCTestCase {
+    func testRangesMerge() {
+        XCTAssertEqual(StreamCache.merging(5..<15, into: [0..<10, 20..<30]), [0..<15, 20..<30])   // overlap
+        XCTAssertEqual(StreamCache.merging(10..<20, into: [0..<10, 20..<30]), [0..<30])           // touching both sides
+        XCTAssertEqual(StreamCache.merging(12..<18, into: [0..<10, 20..<30]), [0..<10, 12..<18, 20..<30])  // gap
+        XCTAssertEqual(StreamCache.merging(0..<40, into: [5..<10, 20..<30]), [0..<40])            // swallows both
     }
 }
 

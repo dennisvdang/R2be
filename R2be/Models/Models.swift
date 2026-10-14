@@ -10,8 +10,11 @@ struct VideoItem: Identifiable, Hashable, Codable, Sendable {
 
     var id: String { bucket + "/" + key }
     var fileName: String { key.split(separator: "/").last.map(String.init) ?? key }
-    var title: String {
-        let name = fileName
+    var title: String { Self.title(fromPath: key) }
+
+    /// The last path component without its extension: "shows/Trip day1.mp4" → "Trip day1".
+    static func title(fromPath path: String) -> String {
+        let name = path.split(separator: "/").last.map(String.init) ?? path
         guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return name }
         return String(name[..<dot])
     }
@@ -26,7 +29,8 @@ struct VideoItem: Identifiable, Hashable, Codable, Sendable {
 enum MediaTypes {
     /// Video and audio formats AVPlayer can stream natively. Only these are indexed and shown;
     /// everything else in the bucket is skipped. MKV/AVI/WebM need transcoding to MP4 first.
-    static let playable: Set<String> = ["mp4", "m4v", "mov", "m3u8", "3gp",
+    /// HLS (.m3u8) is left out because its segment links can't carry the playlist's signature.
+    static let playable: Set<String> = ["mp4", "m4v", "mov", "3gp",
                                         "mp3", "m4a", "flac", "wav"]
     static let images: Set<String> = ["jpg", "jpeg", "png", "webp"]
 }
@@ -48,6 +52,8 @@ enum PlaylistEntry: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Saved as JSON. A new field needs `decodeIfPresent` in a custom `init(from:)`, or files saved by
+/// older builds stop loading.
 struct Playlist: Identifiable, Codable, Hashable, Sendable {
     var id = UUID()
     var name: String

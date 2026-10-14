@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Remembers playback position and duration per video so you can pick up where you left off.
 @MainActor
@@ -9,11 +10,17 @@ enum ResumeStore {
     private static var durations: [String: Double] = UserDefaults.standard.dictionary(forKey: durKey) as? [String: Double] ?? [:]
     private static var pendingSave = false
 
+    /// Bumped whenever progress is saved or cleared. Reading it in the getters below makes any view
+    /// that shows a duration or progress bar redraw when they change.
+    @Observable final class Changes { var count = 0 }
+    private static let changes = Changes()
+
     static func position(for id: String) -> Double? { positions[id] }
-    static func duration(for id: String) -> Double? { durations[id] }
+    static func duration(for id: String) -> Double? { _ = changes.count; return durations[id] }
 
     /// Fraction watched, for the red progress bar under thumbnails.
     static func progress(for id: String) -> Double? {
+        _ = changes.count
         guard let p = positions[id], let d = durations[id], d > 0 else { return nil }
         return min(max(p / d, 0), 1)
     }
@@ -35,6 +42,7 @@ enum ResumeStore {
     static func clearAll() {
         positions = [:]
         UserDefaults.standard.removeObject(forKey: key)
+        changes.count += 1
     }
 
     private static func scheduleSave() {
@@ -45,6 +53,7 @@ enum ResumeStore {
                 UserDefaults.standard.set(positions, forKey: key)
                 UserDefaults.standard.set(durations, forKey: durKey)
                 pendingSave = false
+                changes.count += 1
             }
         }
     }
