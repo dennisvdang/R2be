@@ -2,6 +2,13 @@
 
 An iPhone app that streams video and audio from a Cloudflare R2 bucket. You browse the bucket like a file manager and watch like YouTube. Everything plays inside the app.
 
+<p align="center">
+  <img src="screenshots/library.png" width="200" alt="Library: folders with cover thumbnails">
+  <img src="screenshots/player.png" width="200" alt="Player with Up next and Related">
+  <img src="screenshots/feed.png" width="200" alt="Feed: full-screen swipeable videos">
+  <img src="screenshots/playlists.png" width="200" alt="Playlists">
+</p>
+
 R2be is read-only. It lists and streams your files and never changes the bucket. Playlists, watch progress and thumbnails stay on the phone.
 
 ## Features
@@ -134,4 +141,5 @@ R2be/
                              rewind cache, watch progress, Picture in Picture
   Views/                     library, player, feed, playlists, downloads, settings
 R2beTests/                   unit tests
+screenshots/                 README images; make_demo.py builds the fake library they show
 ```
