@@ -2,17 +2,27 @@ name: Build unsigned IPA
 
 # Builds on GitHub's free macOS runner so no Mac is needed. Sideloadly (Windows) signs the
 # resulting .ipa with your free Apple ID when it installs it on your iPhone.
-# Runs on every push to main and from Actions → Run workflow. TestFlight (testflight.yml) uploads
-# alongside it once its secrets are set.
+# Runs on pushes to main that change the app, and from Actions → Run workflow. macOS minutes cost
+# 10x, so README-only pushes skip it, a newer push cancels a build still running, and a commit
+# message containing [skip ci] skips it entirely.
 on:
   push:
     branches: [main]
+    paths: ["R2be/**", "project.yml", ".github/workflows/build-ipa.yml"]
   workflow_dispatch:
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1        # skip Homebrew's self-update; it adds a minute or more
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
 
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
