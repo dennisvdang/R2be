@@ -324,7 +324,7 @@ def album(rng, a, b):
 # Library
 
 def v(key, scene, size_mb, days, minutes, watched=None):
-    return dict(key=key, scene=scene, size=int(size_mb * 1_048_576), daysAgo=days, duration=round(minutes * 60), watched=watched)
+    return dict(key=key, scene=scene, size=int(size_mb * 1_048_576), daysAgo=days, duration=round(minutes * 2) * 30, watched=watched)
 
 
 VIDEOS = [
@@ -383,11 +383,11 @@ def main():
         title = Path(item["key"]).stem
         jpg = OUT / f"{title}.jpg"
         finish(item["scene"](rng), rng).save(jpg, quality=86)
+        # A still frame every 30 s: full-length clips (the player shows real durations) in ~150 KB.
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(jpg),
-             "-vf", "scale=1920:-2,zoompan=z='1+0.0012*on':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=960x540:fps=24",
-             "-frames:v", "96", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "30", "-movflags", "+faststart",
-             str(OUT / f"{title}.mp4")],
+            ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "1/30", "-i", str(jpg),
+             "-t", str(item["duration"]), "-vf", "scale=960:540", "-c:v", "libx264", "-tune", "stillimage",
+             "-g", "1000", "-crf", "30", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(OUT / f"{title}.mp4")],
             check=True)
     library = dict(playFrom="Travel/Iceland 2025/Iceland day 2.mp4",
                    videos=[{k: x[k] for k in ("key", "size", "daysAgo", "duration", "watched") if x[k] is not None} for x in VIDEOS])

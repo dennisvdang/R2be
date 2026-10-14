@@ -155,7 +155,7 @@ final class PlayerController {
     @ObservationIgnored private var recentlyShown: [String] = []
 
     func showMoreRelated() {
-        var shown = Set(related.map(\.id))
+        var shown = Set(related.map(\.id)).union(upNext.map(\.id))
         if let current { shown.insert(current.id) }
         let plays = PlayCountStore.counts()
         let seen = Set(recentlyShown)
