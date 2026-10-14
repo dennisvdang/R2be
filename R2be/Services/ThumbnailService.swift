@@ -38,6 +38,9 @@ actor ThumbnailService {
     }
 
     func thumbnail(for item: VideoItem, videoURL: URL?, sidecarURL: URL?) async -> UIImage? {
+        #if DEBUG
+        if DemoMode.isOn { return DemoMode.thumbnail(for: item) }
+        #endif
         let key = Self.cacheKey(item)
         if let img = memory.object(forKey: key as NSString) { return img }
         let file = dir.appendingPathComponent(key + ".jpg")

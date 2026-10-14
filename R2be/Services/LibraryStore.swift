@@ -66,6 +66,14 @@ final class LibraryStore {
     private static let activeBucketKey = "activeBucket"
 
     init() {
+        #if DEBUG
+        if DemoMode.isOn {
+            connections = [DemoMode.credentials]
+            activeBucket = DemoMode.bucket
+            indexes[DemoMode.bucket] = DemoMode.index()
+            return
+        }
+        #endif
         let saved = KeychainStore.load()
         let last = UserDefaults.standard.string(forKey: Self.activeBucketKey)
         connections = saved
@@ -382,6 +390,9 @@ final class LibraryStore {
     /// The downloaded copy if there is one (works offline), otherwise a fresh signed link. Playlists
     /// store only bucket + key, never a link, so they can't go stale.
     func streamURL(for item: VideoItem) -> URL? {
+        #if DEBUG
+        if DemoMode.isOn { return DemoMode.streamURL(for: item) }
+        #endif
         if let local = DownloadStore.shared.localURL(for: item) { return local }
         return client(for: item.bucket)?.presignedURL(bucket: item.bucket, key: item.key, expires: streamLinkLifetime)
     }

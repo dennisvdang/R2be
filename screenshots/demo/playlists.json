@@ -1,0 +1,107 @@
+[
+ {
+  "id": "00000000-0000-0000-0000-00000000FA7E",
+  "name": "Favorites",
+  "created": 811692800,
+  "updated": 811692800,
+  "entries": [
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Travel/Iceland 2025/Northern lights timelapse.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Beach/Golden hour waves.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Travel/Japan/Kyoto evening walk.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Hiking/Summit push.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Concerts/Festival main stage.mp4"
+    }
+   }
+  ]
+ },
+ {
+  "id": "3F1C2A6E-7B8D-4C2E-9A10-5D6E7F8A9B01",
+  "name": "Iceland highlights",
+  "created": 811692800,
+  "updated": 811692800,
+  "entries": [
+   {
+    "folder": {
+     "bucket": "media",
+     "prefix": "Travel/Iceland 2025/",
+     "recursive": false
+    }
+   }
+  ]
+ },
+ {
+  "id": "8A2B4C6D-1E3F-4A5B-8C7D-9E0F1A2B3C04",
+  "name": "Road trip mix",
+  "created": 811692800,
+  "updated": 811692800,
+  "entries": [
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Road trips/Desert highway.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Road trips/Coast highway.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Travel/Japan/Tokyo night drive.mp4"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Beach/Sunset paddle.mp4"
+    }
+   }
+  ]
+ },
+ {
+  "id": "C4D5E6F7-0819-4A2B-BC3D-4E5F60718293",
+  "name": "Chill audio",
+  "created": 811692800,
+  "updated": 811692800,
+  "entries": [
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Music/Late night mix.mp3"
+    }
+   },
+   {
+    "video": {
+     "bucket": "media",
+     "key": "Music/Lo-fi set.m4a"
+    }
+   }
+  ]
+ }
+]

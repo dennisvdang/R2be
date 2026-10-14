@@ -101,7 +101,12 @@ struct RootView: View {
                         .tabItem { Label("Settings", systemImage: "gearshape") }
                         .tag(AppTab.settings)
                 }
-                .onAppear { library.refreshIfStale() }
+                .onAppear {
+                    library.refreshIfStale()
+                    #if DEBUG
+                    if DemoMode.isOn { tab = DemoMode.start(library: library, player: player) }
+                    #endif
+                }
                 .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshIfStale() } }
 
                 // Auto-lock suspends the app and cuts the listing off, so stay awake while indexing.
